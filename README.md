@@ -50,6 +50,8 @@ git clone https://github.com/Zhalslar/astrbot_plugin_qzone
 
 ### 效果图
 
+![257528e19908e70160afde6f0dd6b9d2](https://github.com/user-attachments/assets/7aa706c2-6c50-4740-b57b-e61b7a232adf)
+
 ## 🤝 TODO
 
 - [x] 发说说

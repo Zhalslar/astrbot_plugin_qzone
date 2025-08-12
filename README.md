@@ -52,7 +52,7 @@ git clone https://github.com/Zhalslar/astrbot_plugin_qzone
 
 ![257528e19908e70160afde6f0dd6b9d2](https://github.com/user-attachments/assets/7aa706c2-6c50-4740-b57b-e61b7a232adf)
 
-## 🤝 TODO
+## 💡 TODO
 
 - [x] 发说说
 - [x] 校园表白墙功能：投稿、审核投稿
@@ -70,3 +70,7 @@ git clone https://github.com/Zhalslar/astrbot_plugin_qzone
 ## 📌 注意事项
 
 - 想第一时间得到反馈的可以来作者的插件反馈群（QQ群）：460973561（不点star不给进）
+
+## 🤝 鸣谢
+
+- [CampuxBot项目](https://github.com/idoknow/CampuxBot)

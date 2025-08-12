@@ -8,7 +8,7 @@ import pydantic
 
 class Post(pydantic.BaseModel):
     """稿件"""
-    id: int
+    id: typing.Optional[int] = None
     """稿件ID"""
     uin: int
     """用户ID"""
@@ -54,7 +54,7 @@ class PostManager:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS posts (
-                    id INTEGER PRIMARY KEY,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     uin INTEGER NOT NULL,
                     text TEXT NOT NULL,
                     images TEXT NOT NULL,
@@ -66,17 +66,16 @@ class PostManager:
             """)
             await db.commit()
 
-    async def add_post(self, post: Post):
+    async def add_post(self, post: Post) -> int:
         """添加稿件"""
         async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
+            cursor = await db.execute(
                 """
                 INSERT INTO posts (
-                    id, uin, text, images, anon, status, create_time, extra_text
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+                    uin, text, images, anon, status, create_time, extra_text
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
-                    post.id,
                     post.uin,
                     post.text,
                     json.dumps(post.images, ensure_ascii=False),
@@ -87,16 +86,9 @@ class PostManager:
                 ),
             )
             await db.commit()
-
-    async def exists_by_id(self, post_id: int) -> bool:
-        """判断稿件是否存在（根据 id）"""
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute(
-                "SELECT 1 FROM posts WHERE id = ? LIMIT 1", (post_id,)
-            )
-            row = await cursor.fetchone()
-            return row is not None
-
+            last_id = cursor.lastrowid  # 获取自增ID
+            assert last_id is not None
+            return last_id
     async def get_post(self, key: str = "id", value: typing.Any = None) -> typing.Optional[Post]:
         """根据任意字段获取单条稿件，默认按 id 查询"""
         if value is None:
@@ -118,29 +110,6 @@ class PostManager:
                     extra_text=row[7],
                 )
             return None
-
-    async def get_text_and_images_by_id(self, post_id: int) -> tuple[str, list[str]]:
-        """根据 ID 返回稿件的 text 和 images"""
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute(
-                "SELECT text, images FROM posts WHERE id = ?",
-                (post_id,),
-            )
-            row = await cursor.fetchone()
-            if row:
-                text = row[0]
-                images = json.loads(row[1]) if row[1] else []
-                return text, images
-            return "", []
-
-    async def get_total_count(self) -> int:
-        """获取当前数据库中稿件总数"""
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute("SELECT COUNT(*) FROM posts")
-            row = await cursor.fetchone()
-            if row is None:
-                return 0
-            return row[0]
 
     async def update_status(self, post_id: int, status: str):
         """更新稿件状态"""

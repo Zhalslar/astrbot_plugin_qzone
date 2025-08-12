@@ -8,9 +8,9 @@ from astrbot.api import logger
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
-from .post import Post, PostManager
-from .utils import download_file, get_image_urls, get_reply_message_str
-from .api import QzoneAPI
+from .core.post import Post, PostManager
+from .core.utils import download_file, get_image_urls, get_reply_message_str
+from .core.api import QzoneAPI
 
 
 @register(
@@ -37,7 +37,7 @@ class QzonePlugin(Star):
         await self.pm.init_db()
 
     @filter.event_message_type(filter.EventMessageType.ALL, property=1)
-    async def init_curfew_manager(self, event: AiocqhttpMessageEvent):
+    async def auto_login_qzone(self, event: AiocqhttpMessageEvent):
         "自动登录QQ空间（不优雅的方案）"
         if not self.qzone.cookies:
             await self.qzone.login(client=event.bot)
@@ -93,7 +93,7 @@ class QzonePlugin(Star):
         if not content or "新投稿" not in content:
             return None
         match = re.search(r"新投稿#(\d+)", content)
-        return int(match.group(1)) if match else 0
+        return int(match.group(1)) if match else None
 
     @filter.command("发说说")
     async def publish_emotion(self, event: AiocqhttpMessageEvent):
@@ -103,9 +103,7 @@ class QzonePlugin(Star):
         images = [
             file for url in image_urls if (file := await download_file(url)) is not None
         ]
-        post_id = (await self.pm.get_total_count()) + 1
         post = Post(
-            id=post_id,
             uin=int(event.get_sender_id()),
             text=text,
             images=image_urls,
@@ -113,7 +111,7 @@ class QzonePlugin(Star):
             status="approved",
             create_time=int(time.time()),
         )
-        await self.pm.add_post(post)
+        post_id = await self.pm.add_post(post)
         await self.qzone.publish_emotion(text, images)
         yield event.plain_result(f"已发布说说#{post_id}")
 
@@ -123,9 +121,7 @@ class QzonePlugin(Star):
         """投稿 <文字+图片>"""
         # 存入数据库
         text = event.message_str.removeprefix("投稿").strip()
-        post_id = (await self.pm.get_total_count()) + 1
         post = Post(
-            id=post_id,
             uin=int(event.get_sender_id()),
             text=text,
             images=await get_image_urls(event),
@@ -133,7 +129,7 @@ class QzonePlugin(Star):
             status="pending",
             create_time=int(time.time()),
         )
-        await self.pm.add_post(post)
+        post_id = await self.pm.add_post(post)
 
         # 通知管理员
         msg = f"【新投稿#{post_id}】\n{post.to_str()}"
@@ -160,12 +156,15 @@ class QzonePlugin(Star):
         # 更新稿件状态
         await self.pm.update_status(post_id, "approved")
 
+        post = await self.pm.get_post(key="id", value=post_id)
+        if not post:
+            return
+
         # 发布说说
-        text, image_urls = await self.pm.get_text_and_images_by_id(post_id)
         images = [
-            file for url in image_urls if (file := await download_file(url)) is not None
+            file for url in post.images if (file := await download_file(url)) is not None
         ]
-        await self.qzone.publish_emotion(text, images)
+        await self.qzone.publish_emotion(content=post.text, images=images)
 
         # 通知管理员
         yield event.plain_result(f"已发布说说#{post_id}")
@@ -208,6 +207,6 @@ class QzonePlugin(Star):
         await self.notice_user(client=event.bot, user_id=post.uin, message=user_msg)
 
     async def terminate(self):
-        """插件卸载时取消所有撤回任务"""
+        """插件卸载时关闭Qzone API网络连接"""
         await self.qzone.terminate()
-        logger.info("自动撤回插件已卸载")
+        logger.info("已关闭Qzone API网络连接")

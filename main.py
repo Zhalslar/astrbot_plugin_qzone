@@ -95,6 +95,7 @@ class QzonePlugin(Star):
         match = re.search(r"新投稿#(\d+)", content)
         return int(match.group(1)) if match else None
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("发说说")
     async def publish_emotion(self, event: AiocqhttpMessageEvent):
         """直接发说说，无需审核"""
@@ -145,6 +146,7 @@ class QzonePlugin(Star):
         msg = f"【稿件#{post_id}】\n{post.to_str()}"
         yield event.plain_result(msg)
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("通过")
     async def approve(self, event: AiocqhttpMessageEvent):
         """(引用稿件)通过"""
@@ -179,6 +181,7 @@ class QzonePlugin(Star):
             message=f"恭喜！您的投稿#{post_id}已通过并发布到空间",
         )
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("不通过")
     async def reject(self, event: AiocqhttpMessageEvent):
         """(引用稿件)不通过 <原因>"""
@@ -205,6 +208,8 @@ class QzonePlugin(Star):
         if reason:
             user_msg += f"\n理由：{reason}"
         await self.notice_user(client=event.bot, user_id=post.uin, message=user_msg)
+
+
 
     async def terminate(self):
         """插件卸载时关闭Qzone API网络连接"""

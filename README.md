@@ -57,6 +57,8 @@ git clone https://github.com/Zhalslar/astrbot_plugin_qzone
 - [x] 发说说
 - [x] 校园表白墙功能：投稿、审核投稿
 - [ ] 空间点赞、评论
+- [ ] 定时自动发说说
+- [ ] LLM发说说
 
 ## 👥 贡献指南
 

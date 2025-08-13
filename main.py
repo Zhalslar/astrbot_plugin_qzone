@@ -9,7 +9,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 from .core.post import Post, PostManager
-from .core.utils import download_file, get_image_urls, get_reply_message_str
+from .core.utils import get_image_urls, get_reply_message_str, parse_qzone_visitors
 from .core.api import QzoneAPI
 
 
@@ -35,13 +35,6 @@ class QzonePlugin(Star):
 
     async def initialize(self):
         await self.pm.init_db()
-
-    @filter.event_message_type(filter.EventMessageType.ALL, property=1)
-    async def auto_login_qzone(self, event: AiocqhttpMessageEvent):
-        "自动登录QQ空间（不优雅的方案）"
-        if not self.qzone.cookies:
-            await self.qzone.login(client=event.bot)
-            logger.info(f"已登录QQ空间: {self.qzone.uin}")
 
     async def notice_admin(self, client: CQHttp, message: str):
         """通知管理群或管理员"""
@@ -99,38 +92,38 @@ class QzonePlugin(Star):
     @filter.command("发说说")
     async def publish_emotion(self, event: AiocqhttpMessageEvent):
         """直接发说说，无需审核"""
-        text = event.message_str.removeprefix("发说说").strip()
-        image_urls = await get_image_urls(event)
-        images = [
-            file for url in image_urls if (file := await download_file(url)) is not None
-        ]
         post = Post(
-            uin=int(event.get_sender_id()),
-            text=text,
-            images=image_urls,
-            anon=False,
-            status="approved",
-            create_time=int(time.time()),
+            uin= int(event.get_sender_id()),
+            gin= int(event.get_group_id()),
+            text= event.message_str.removeprefix("发说说").strip(),
+            images= await get_image_urls(event),
+            anon= False,
+            status= "approved",
+            create_time= int(time.time()),
         )
-        post_id = await self.pm.add_post(post)
-        await self.qzone.publish_emotion(text, images)
+        post_id = await self.pm.add(post)
+        await self.qzone.publish_emotion(
+            client=event.bot, content=post.text, images=post.images
+        )
         yield event.plain_result(f"已发布说说#{post_id}")
 
 
     @filter.command("投稿")
     async def submit(self, event: AiocqhttpMessageEvent):
         """投稿 <文字+图片>"""
-        # 存入数据库
-        text = event.message_str.removeprefix("投稿").strip()
         post = Post(
-            uin=int(event.get_sender_id()),
-            text=text,
-            images=await get_image_urls(event),
-            anon=False,
-            status="pending",
-            create_time=int(time.time()),
+            uin= int(event.get_sender_id()),
+            gin= int(event.get_group_id()),
+            text= event.message_str.removeprefix("投稿").strip(),
+            images= await get_image_urls(event),
+            anon= False,
+            status= "pending",
+            create_time= int(time.time()),
         )
-        post_id = await self.pm.add_post(post)
+        post_id = await self.pm.add(post)
+
+        # 通知投稿者
+        yield event.plain_result(f"您的稿件#{post_id}已提交，请耐心等待审核")
 
         # 通知管理员
         msg = f"【新投稿#{post_id}】\n{post.to_str()}"
@@ -139,7 +132,7 @@ class QzonePlugin(Star):
 
     @filter.command("查看稿件", alias={"查看投稿"})
     async def check_post(self, event: AiocqhttpMessageEvent, post_id: int = -1):
-        post = await self.pm.get_post(key="id", value=post_id)
+        post = await self.pm.get(key="id", value=post_id)
         if not post:
             yield event.plain_result(f"稿件#{post_id}不存在")
             return
@@ -156,29 +149,23 @@ class QzonePlugin(Star):
             return
 
         # 更新稿件状态
-        await self.pm.update_status(post_id, "approved")
-
-        post = await self.pm.get_post(key="id", value=post_id)
+        await self.pm.update(post_id, key="status", value="approved")
+        post = await self.pm.get(key="id", value=post_id)
         if not post:
             return
 
         # 发布说说
-        images = [
-            file for url in post.images if (file := await download_file(url)) is not None
-        ]
-        await self.qzone.publish_emotion(content=post.text, images=images)
+        await self.qzone.publish_emotion(client=event.bot, content=post.text, images=post.images)
 
         # 通知管理员
         yield event.plain_result(f"已发布说说#{post_id}")
 
         # 通知投稿者
-        post = await self.pm.get_post(key="id", value=post_id)
-        if not post:
-            return
         await self.notice_user(
-            client=event.bot,
-            user_id=post.uin,
-            message=f"恭喜！您的投稿#{post_id}已通过并发布到空间",
+            client= event.bot,
+            group_id = post.gin,
+            user_id= post.uin,
+            message= f"恭喜！您的投稿#{post_id}已通过并发布到空间",
         )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -190,7 +177,10 @@ class QzonePlugin(Star):
             yield event.plain_result("未检测到稿件ID")
             return
         # 更新稿件状态
-        await self.pm.update_status(post_id, "rejected")
+        await self.pm.update(post_id, key="status", value="rejected")
+        post = await self.pm.get(key="id", value=post_id)
+        if not post:
+            return
 
         reason = event.message_str.removeprefix("不通过").strip()
         # 通知管理员
@@ -200,16 +190,23 @@ class QzonePlugin(Star):
         yield event.plain_result(admin_msg)
 
         # 通知投稿者
-        post = await self.pm.get_post(key="id", value=post_id)
-        if not post:
-            return
-
         user_msg = f"很遗憾，您的投稿#{post_id}未通过"
         if reason:
             user_msg += f"\n理由：{reason}"
         await self.notice_user(client=event.bot, user_id=post.uin, message=user_msg)
 
+    # @filter.command("点赞")
+    # async def like(self, event: AiocqhttpMessageEvent):
+    #     """(引用稿件)点赞"""
+    #     await self.qzone.like(client=event.bot)
+    #     yield event.plain_result("已点赞")
 
+    @filter.command("访客")
+    async def visitor(self, event: AiocqhttpMessageEvent):
+        """查看访客"""
+        data = (await self.qzone.get_visitor(client=event.bot))["data"]
+        msg = parse_qzone_visitors(data)
+        yield event.plain_result(msg)
 
     async def terminate(self):
         """插件卸载时关闭Qzone API网络连接"""

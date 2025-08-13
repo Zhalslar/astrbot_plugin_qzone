@@ -1,191 +1,240 @@
 import asyncio
-from http.cookies import SimpleCookie
-import json
 import base64
-from aiocqhttp import CQHttp
+import json
+from dataclasses import dataclass
+from http.cookies import SimpleCookie
+import re
+import time
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+
 import aiohttp
+from aiocqhttp import CQHttp
 from astrbot.api import logger
 
+from .utils import normalize_images
 
+BytesOrStr = Union[str, bytes]
 
-def generate_gtk(skey) -> str:
-    """生成gtk"""
+# ---------- 工具函数 ----------
+def _generate_gtk(skey: str) -> str:
+    """生成 QQ 空间 gtk"""
     hash_val = 5381
-    for i in range(len(skey)):
-        hash_val += (hash_val << 5) + ord(skey[i])
-    return str(hash_val & 2147483647)
+    for ch in skey:
+        hash_val += (hash_val << 5) + ord(ch)
+    return str(hash_val & 0x7FFFFFFF)
 
 
-def get_picbo_and_richval(upload_result):
-    json_data = upload_result
+def _parse_upload_result(payload: dict[str, Any]) -> Tuple[str, str]:
+    """从上传返回体里提取 picbo 与 richval"""
+    if payload.get("ret") != 0:
+        raise RuntimeError("图片上传失败")
 
-    # for debug
-    if "ret" not in json_data:
-        raise Exception("获取图片picbo和richval失败")
-    # end
-
-    if json_data["ret"] != 0:
-        raise Exception("上传图片失败")
-    picbo_spt = json_data["data"]["url"].split("&bo=")
-    if len(picbo_spt) < 2:
-        raise Exception("上传图片失败")
-    picbo = picbo_spt[1]
+    data = payload["data"]
+    picbo = data["url"].split("&bo=", 1)[1]
 
     richval = ",{},{},{},{},{},{},,{},{}".format(
-        json_data["data"]["albumid"],
-        json_data["data"]["lloc"],
-        json_data["data"]["sloc"],
-        json_data["data"]["type"],
-        json_data["data"]["height"],
-        json_data["data"]["width"],
-        json_data["data"]["height"],
-        json_data["data"]["width"],
+        data["albumid"],
+        data["lloc"],
+        data["sloc"],
+        data["type"],
+        data["height"],
+        data["width"],
+        data["height"],
+        data["width"],
     )
-
     return picbo, richval
 
+class _QzoneURL:
+    BASE = "https://user.qzone.qq.com"
+    H5_BASE = "https://h5.qzone.qq.com"
+    UPLOAD = "https://up.qzone.qq.com/cgi-bin/upload/cgi_upload_image"
+    EMOTION = f"{BASE}/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6"
+    VISITOR = f"{H5_BASE}/proxy/domain/g.qzone.qq.com/cgi-bin/friendshow/cgi_get_visitor_more"
 
-GET_VISITOR_AMOUNT_URL = "https://h5.qzone.qq.com/proxy/domain/g.qzone.qq.com/cgi-bin/friendshow/cgi_get_visitor_more?uin={}&mask=7&g_tk={}&page=1&fupdate=1&clear=1"
-UPLOAD_IMAGE_URL = "https://up.qzone.qq.com/cgi-bin/upload/cgi_upload_image"
-EMOTION_PUBLISH_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6"
+    # LIKE = f"{H5_BASE}/proxy/domain/w.qzone.qq.com/cgi-bin/likes/internal_dolike_app"
+    # FEED_LIST = f"{H5_BASE}/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_msglist_v6"
 
 
+# ---------- 登录态 ----------
+@dataclass(slots=True)
+class _Auth:
+    uin: int
+    skey: str
+    p_skey: str
+    gtk2: str
+
+
+# ---------- 主 API ----------
 class QzoneAPI:
-    def __init__(self):
-        self.session = aiohttp.ClientSession(
+    """QQ 空间 HTTP API 封装"""
+
+    def __init__(self) -> None:
+        self._session = aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(limit=100, ssl=False),
             timeout=aiohttp.ClientTimeout(total=10),
         )
-        self.cookies: dict = {}
-        self.gtk2: str = ""
-        self.uin: int = 0
+        self._auth: Optional[_Auth] = None
 
-    async def login(self, client: CQHttp):
-        cookie_str = (await client.get_cookies(domain="user.qzone.qq.com")).get(
-            "cookies", ""
-        )
-        self.cookies = {k: v.value for k, v in SimpleCookie(cookie_str).items()}
-        if "p_skey" in self.cookies:
-            self.gtk2 = generate_gtk(self.cookies["p_skey"])
-        if "uin" in self.cookies:
-            self.uin = int(self.cookies["uin"][1:])
-        logger.info(f"Cookies: {self.cookies}")
-
-    async def do(
+    # ---------------- 统一请求封装 ----------------
+    async def _request(
         self,
         method: str,
         url: str,
-        params: dict = {},
-        data: dict = {},
-        headers: dict = {},
+        *,
+        params: Dict[str, Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        headers: Dict[str, str] | None = None,
         timeout: int = 10,
     ) -> aiohttp.ClientResponse:
-        async with self.session.request(
-            method=method.upper(),
-            url=url,
+        """aiohttp 包装"""
+        async with self._session.request(
+            method.upper(),
+            url,
             params=params,
             data=data,
             headers=headers,
-            cookies=self.cookies,
+            cookies=self._raw_cookies,
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as resp:
             await resp.read()
             return resp
 
-    async def token_valid(self, *, max_retry: int = 3, backoff: float = 1.0) -> bool:
-        """
-        验证 token 是否可用。
-        :param max_retry: 最大重试次数（含首次）。
-        :param backoff:   重试间隔基数（秒），实际 sleep 时间为 `backoff * (2 ** attempt)`。
-        """
+    async def _request_json(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        headers: Dict[str, str] | None = None,
+        timeout: int = 10,
+        strip_callback: bool = True,
+    ) -> Dict[str, Any]:
+        """自动把响应体反序列化成 dict"""
+        resp = await self._request(
+            method, url, params=params, data=data, headers=headers, timeout=timeout
+        )
+        text = await resp.text()
+        if strip_callback and text.startswith("_Callback("):
+            text = text[10:-2]
+        try:
+            data, _ = json.JSONDecoder().raw_decode(text.strip())
+            if not data:
+                raise RuntimeError("返回数据为空")
+            return data
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"返回不是合法 JSON: {text}") from e
+
+    async def _request_text(self, method: str, url: str, **kw) -> str:
+        resp = await self._request(method, url, **kw)
+        return await resp.text()
+
+    # ---------------- 登录 ----------------
+    async def login(self, client: CQHttp) -> None:
+        if self._auth is not None:
+            return
+
+        cookie_str = (await client.get_cookies(domain="user.qzone.qq.com")).get(
+            "cookies", ""
+        )
+        cookies = {k: v.value for k, v in SimpleCookie(cookie_str).items()}
+
+        skey = cookies.get("skey", "")
+        p_skey = cookies.get("p_skey", "")
+        uin = int(cookies.get("uin", "0")[1:])
+
+        if not all((skey, p_skey, uin)):
+            raise RuntimeError("QQ 空间 Cookie 缺失")
+
+        self._auth = _Auth(
+            uin=uin,
+            skey=skey,
+            p_skey=p_skey,
+            gtk2=_generate_gtk(p_skey),
+        )
+        logger.info(f"QQ 空间登录成功: {uin}")
+
+    @property
+    def _raw_cookies(self) -> Dict[str, str]:
+        if self._auth is None:
+            return {}
+        return {
+            "uin": f"o{self._auth.uin}",
+            "skey": self._auth.skey,
+            "p_skey": self._auth.p_skey,
+        }
+
+    # ---------------- 业务方法 ----------------
+    async def token_valid(self, client: CQHttp, max_retry: int = 3, backoff: float = 1.0) -> bool:
+        """验证当前登录态是否可用"""
         for attempt in range(max_retry):
             try:
-                await self.get_visitor_amount()  # 只要调用成功就认为有效
+                await self.get_visitor(client)
                 return True
-            except asyncio.CancelledError:       # 任务被取消时直接向上抛
+            except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.error(f"Token validation failed (attempt {attempt + 1}): {exc!r}")
+                logger.warning(f"Token 校验失败(第 {attempt + 1} 次): {exc!r}")
                 if attempt < max_retry - 1:
-                    await asyncio.sleep(backoff * (2 ** attempt))
+                    await asyncio.sleep(backoff * (2**attempt))
         return False
 
-    def _image_to_base64(self, image: bytes) -> str:
-        pic_base64 = base64.b64encode(image)
-        return str(pic_base64)[2:-1]
+    async def get_visitor(self, client: CQHttp) -> dict:
+        """获取今日/总访客数"""
+        await self.login(client)
+        assert self._auth is not None
+        params = {
+            "uin": self._auth.uin,
+            "mask": 7,
+            "g_tk": self._auth.gtk2,
+            "page": 1,
+            "fupdate": 1,
+            "clear": 1,
+        }
+        payload = await self._request_json("GET", url=_QzoneURL.VISITOR, params=params)
+        return payload
 
-    async def get_visitor_amount(self) -> tuple[int, int]:
-        """获取空间访客信息
-
-        Returns:
-            tuple[int, int]: 今日访客数, 总访客数
-        """
-        res = await self.do(
-            method="GET",
-            url=GET_VISITOR_AMOUNT_URL.format(self.uin, self.gtk2),
+    async def _upload_image(self, image: bytes) -> Dict[str, Any]:
+        """上传单张图片，返回原始 JSON"""
+        assert self._auth is not None
+        data = {
+            "filename": "filename",
+            "uploadtype": "1",
+            "albumtype": "7",
+            "skey": self._auth.skey,
+            "uin": self._auth.uin,
+            "p_skey": self._auth.p_skey,
+            "output_type": "json",
+            "base64": "1",
+            "picfile": base64.b64encode(image).decode(),
+        }
+        headers = {
+            "referer": f"{_QzoneURL.BASE}/{self._auth.uin}",
+            "origin": _QzoneURL.BASE,
+        }
+        resp = await self._request(
+            "POST", url=_QzoneURL.UPLOAD, data=data, headers=headers, timeout=60
         )
-        json_text = res.text.replace("_Callback(", "")[:-3]
-
+        if resp.status != 200:
+            raise RuntimeError("图片上传请求失败")
+        text = await resp.text()
         try:
-            json_obj = json.loads(json_text)
-            visit_count = json_obj["data"]
-            return visit_count["todaycount"], visit_count["totalcount"]
+            return json.loads(text[text.find("{") : text.rfind("}") + 1])
         except Exception as e:
-            raise e
+            raise RuntimeError(f"图片上传结果解析失败: {text}") from e
 
-    async def _upload_image(self, image: bytes) -> str:
-        """上传图片"""
+    async def publish_emotion(
+        self,
+        client: CQHttp,
+        content: str,
+        images: Sequence[BytesOrStr] | None = None,
+    ) -> str:
+        """发表说说，返回说说 tid"""
+        await self.login(client)
+        assert self._auth is not None
 
-        res = await self.do(
-            method="POST",
-            url=UPLOAD_IMAGE_URL,
-            data={
-                "filename": "filename",
-                "zzpanelkey": "",
-                "uploadtype": "1",
-                "albumtype": "7",
-                "exttype": "0",
-                "skey": self.cookies["skey"],
-                "zzpaneluin": self.uin,
-                "p_uin": self.uin,
-                "uin": self.uin,
-                "p_skey": self.cookies["p_skey"],
-                "output_type": "json",
-                "qzonetoken": "",
-                "refer": "shuoshuo",
-                "charset": "utf-8",
-                "output_charset": "utf-8",
-                "upload_hd": "1",
-                "hd_width": "2048",
-                "hd_height": "10000",
-                "hd_quality": "96",
-                "backUrls": "http://upbak.photo.qzone.qq.com/cgi-bin/upload/cgi_upload_image,http://119.147.64.75/cgi-bin/upload/cgi_upload_image",
-                "url": f"https://up.qzone.qq.com/cgi-bin/upload/cgi_upload_image?g_tk={self.gtk2}",
-                "base64": "1",
-                "picfile": self._image_to_base64(image),
-            },
-            headers={
-                "referer": "https://user.qzone.qq.com/" + str(self.uin),
-                "origin": "https://user.qzone.qq.com",
-            },
-            timeout=60,
-        )
-        if res.status == 200:
-            text = await res.text()
-            return eval(text[text.find("{") : text.rfind("}") + 1])
-        else:
-            raise Exception("上传图片失败")
-
-    async def publish_emotion(self, content: str, images: list[bytes] | None = []) -> str:
-        """发表说说
-        :return: 说说tid
-        :except: 发表失败
-        """
-
-        if images is None:
-            images = []
-
-        post_data = {
+        imgs: List[bytes] = await normalize_images(images or [])
+        post_data: Dict[str, Any] = {
             "syn_tweet_verson": "1",
             "paramstr": "1",
             "who": "1",
@@ -194,46 +243,74 @@ class QzoneAPI:
             "ver": "1",
             "ugc_right": "1",
             "to_sign": "0",
-            "hostuin": self.uin,
+            "hostuin": self._auth.uin,
             "code_version": "1",
             "format": "json",
-            "qzreferrer": "https://user.qzone.qq.com/" + str(self.uin),
+            "qzreferrer": f"{_QzoneURL.BASE}/{self._auth.uin}",
         }
 
-        if len(images) > 0:
-            # 挨个上传图片
-            pic_bos = []
-            richvals = []
-            for img in images:
-                uploadresult = await self._upload_image(img)
-                picbo, richval = get_picbo_and_richval(uploadresult)
+        if imgs:
+            pic_bos, richvals = [], []
+            for img in imgs:
+                up_json = await self._upload_image(img)
+                picbo, richval = _parse_upload_result(up_json)
                 pic_bos.append(picbo)
                 richvals.append(richval)
 
-            post_data["pic_bo"] = ",".join(pic_bos)
-            post_data["richtype"] = "1"
-            post_data["richval"] = "\t".join(richvals)
+            post_data.update(
+                pic_bo=",".join(pic_bos),
+                richtype="1",
+                richval="\t".join(richvals),
+            )
 
-        res = await self.do(
-            method="POST",
-            url=EMOTION_PUBLISH_URL,
-            params={
-                "g_tk": self.gtk2,
-                "uin": self.uin,
-            },
+        params = {"g_tk": self._auth.gtk2, "uin": self._auth.uin}
+        headers = {
+            "referer": f"{_QzoneURL.BASE}/{self._auth.uin}",
+            "origin": _QzoneURL.BASE,
+        }
+        payload = await self._request_json(
+            "POST",
+            url=_QzoneURL.EMOTION,
+            params=params,
             data=post_data,
-            headers={
-                "referer": "https://user.qzone.qq.com/" + str(self.uin),
-                "origin": "https://user.qzone.qq.com",
-            },
+            headers=headers,
         )
-        text = await res.text()
-        logger.debug("publish_emotion raw response:\n%s", text[:2000])
-        data = json.loads(text)
-        if data.get("code") == 0:
-            return data["tid"]
-        else:
-            raise Exception(f"发表说说失败：{data.get('message', data)}")
+        if payload.get("code") == 0:
+            return str(payload["tid"])
+        raise RuntimeError(f"发表说说失败: {payload.get('message', payload)}")
 
-    async def terminate(self):
-        await self.session.close()
+    # async def like(self, unikey, curkey, dataid, qztoken):
+    #     """给说说点赞"""
+    #     assert self._auth is not None
+    #     params = {
+    #         "g_tk": self._auth.gtk2,
+    #         "qzonetoken": qztoken,
+    #     }
+    #     data = {
+    #         "qzreferrer": f"{_QzoneURL.BASE}/{self._auth.uin}",
+    #         "opuin": self._auth.uin,
+    #         "unikey": str(unikey),
+    #         "curkey": str(curkey),
+    #         "from": "1",
+    #         "appid": "311",
+    #         "typeid": "0",
+    #         "abstime": str(time.time()),
+    #         "fid": str(dataid),
+    #         "active": "0",
+    #         "fupdate": "1",
+    #     }
+    #     headers = {
+    #         "referer": f"{_QzoneURL.BASE}/{self._auth.uin}",
+    #         "origin": _QzoneURL.BASE,
+    #     }
+
+    #     payload = await self._request_json(
+    #         "POST", url=_QzoneURL.LIKE, params=params, data=data, headers=headers
+    #     )
+    #     if payload.get("code") != 0:
+    #         raise RuntimeError(
+    #             f"点赞失败: unikey={unikey}; curkey={curkey}; fid={dataid}"
+    #         )
+
+    async def terminate(self) -> None:
+        await self._session.close()

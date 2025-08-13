@@ -8,10 +8,13 @@ import pydantic
 
 class Post(pydantic.BaseModel):
     """稿件"""
+
     id: typing.Optional[int] = None
     """稿件ID"""
     uin: int
     """用户ID"""
+    gin: int
+    """群聊ID"""
     text: str
     """文本内容"""
     images: list[str]
@@ -34,7 +37,12 @@ class Post(pydantic.BaseModel):
         }
         lines = [
             f"用户：{self.uin}",
-            f"匿名：{'是' if self.anon else '否'}",
+        ]
+        if self.gin:
+            lines.append(f"群聊：{self.gin}")
+        if self.anon:
+            lines.append("匿名：是")
+        lines += [
             f"状态：{status_map.get(self.status, self.status)}",
             f"时间：{datetime.fromtimestamp(self.create_time).strftime('%Y-%m-%d %H:%M:%S')}",
             f"文本：{self.text}",
@@ -46,8 +54,39 @@ class Post(pydantic.BaseModel):
 
 
 class PostManager:
+    # 允许查询的列
+    ALLOWED_QUERY_KEYS = {
+        "id",
+        "uin",
+        "gin",
+        "status",
+        "anon",
+        "text",
+        "images",
+        "create_time",
+        "extra_text",
+    }
+
     def __init__(self, db_path: Path):
         self.db_path = db_path
+
+    @staticmethod
+    def _row_to_post(row) -> Post:
+        return Post(
+            id=row[0],
+            uin=row[1],
+            gin=row[2],
+            text=row[3],
+            images=json.loads(row[4]),
+            anon=bool(row[5]),
+            status=row[6],
+            create_time=row[7],
+            extra_text=row[8],
+        )
+
+    @staticmethod
+    def _encode_images(imgs: list[str]) -> str:
+        return json.dumps(imgs, ensure_ascii=False)
 
     async def init_db(self):
         """初始化数据库"""
@@ -56,9 +95,10 @@ class PostManager:
                 CREATE TABLE IF NOT EXISTS posts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     uin INTEGER NOT NULL,
+                    gin INTEGER NOT NULL,
                     text TEXT NOT NULL,
-                    images TEXT NOT NULL,
-                    anon INTEGER NOT NULL,
+                    images TEXT NOT NULL CHECK(json_valid(images)),
+                    anon INTEGER NOT NULL CHECK(anon IN (0,1)),
                     status TEXT NOT NULL,
                     create_time INTEGER NOT NULL,
                     extra_text TEXT
@@ -66,19 +106,19 @@ class PostManager:
             """)
             await db.commit()
 
-    async def add_post(self, post: Post) -> int:
+    async def add(self, post: Post) -> int:
         """添加稿件"""
         async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute(
+            cur = await db.execute(
                 """
-                INSERT INTO posts (
-                    uin, text, images, anon, status, create_time, extra_text
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO posts (uin, gin, text, images, anon, status, create_time, extra_text)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     post.uin,
+                    post.gin,
                     post.text,
-                    json.dumps(post.images, ensure_ascii=False),
+                    self._encode_images(post.images),
                     int(post.anon),
                     post.status,
                     post.create_time,
@@ -86,44 +126,63 @@ class PostManager:
                 ),
             )
             await db.commit()
-            last_id = cursor.lastrowid  # 获取自增ID
+            last_id = cur.lastrowid  # 获取自增ID
             assert last_id is not None
             return last_id
-    async def get_post(self, key: str = "id", value: typing.Any = None) -> typing.Optional[Post]:
-        """根据任意字段获取单条稿件，默认按 id 查询"""
+
+    async def get(
+        self,
+        *,
+        key: typing.Literal[
+            "id",
+            "uin",
+            "gin",
+            "status",
+            "anon",
+            "text",
+            "images",
+            "create_time",
+            "extra_text",
+        ] = "id",
+        value,
+    ) -> typing.Optional[Post]:
+        """根据指定字段查询一条稿件记录，默认按 id 查询"""
         if value is None:
             raise ValueError("必须提供查询值")
 
         async with aiosqlite.connect(self.db_path) as db:
             query = f"SELECT * FROM posts WHERE {key} = ? LIMIT 1"
-            cursor = await db.execute(query, (value,))
-            row = await cursor.fetchone()
-            if row:
-                return Post(
-                    id=row[0],
-                    uin=row[1],
-                    text=row[2],
-                    images=json.loads(row[3]),
-                    anon=bool(row[4]),
-                    status=row[5],
-                    create_time=row[6],
-                    extra_text=row[7],
-                )
-            return None
+            async with db.execute(query, (value,)) as cursor:
+                row = await cursor.fetchone()
+                return self._row_to_post(row) if row else None
 
-    async def update_status(self, post_id: int, status: str):
-        """更新稿件状态"""
+    async def update(
+        self,
+        post_id: int,
+        key: typing.Literal[
+            "uin",
+            "gin",
+            "status",
+            "anon",
+            "text",
+            "images",
+            "create_time",
+            "extra_text",
+        ],
+        value,
+    ) -> int:
+        if key not in self.ALLOWED_QUERY_KEYS:
+            raise ValueError(f"不允许更新的字段: {key}")
         async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                "UPDATE posts SET status = ? WHERE id = ?", (status, post_id)
+            cur = await db.execute(
+                f"UPDATE posts SET {key} = ? WHERE id = ?", (value, post_id)
             )
             await db.commit()
+            return cur.rowcount
 
-    async def delete_post(self, post_id: int):
+    async def delete(self, post_id: int) -> int:
         """删除稿件"""
         async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("DELETE FROM posts WHERE id = ?", (post_id,))
+            cur = await db.execute("DELETE FROM posts WHERE id = ?", (post_id,))
             await db.commit()
-
-
-
+            return cur.rowcount

@@ -11,8 +11,12 @@ class Post(pydantic.BaseModel):
 
     id: typing.Optional[int] = None
     """稿件ID"""
+    tid: str = ""
+    """QQ给定的说说ID"""
     uin: int
     """用户ID"""
+    name: str
+    """用户昵称"""
     gin: int
     """群聊ID"""
     text: str
@@ -32,11 +36,12 @@ class Post(pydantic.BaseModel):
         """把稿件信息整理成易读文本"""
         status_map = {
             "pending": "待审核",
-            "approved": "已通过",
-            "rejected": "已拒绝",
+            "approved": "已发布",
+            "rejected": "未发布",
         }
         lines = [
-            f"用户：{self.uin}",
+            f"时间：{datetime.fromtimestamp(self.create_time).strftime('%Y-%m-%d %H:%M')}",
+            f"用户：{self.name}({self.uin})",
         ]
         if self.gin:
             lines.append(f"群聊：{self.gin}")
@@ -44,12 +49,11 @@ class Post(pydantic.BaseModel):
             lines.append("匿名：是")
         lines += [
             f"状态：{status_map.get(self.status, self.status)}",
-            f"时间：{datetime.fromtimestamp(self.create_time).strftime('%Y-%m-%d %H:%M:%S')}",
-            f"文本：{self.text}",
+            f"文本：{self.text or '无'}",
             f"图片：{', '.join(self.images) if self.images else '无'}",
         ]
         if self.extra_text:
-            lines.append(f"额外文本：{self.extra_text}")
+            lines.append(f"补充：{self.extra_text}")
         return "\n".join(lines)
 
 
@@ -57,7 +61,9 @@ class PostManager:
     # 允许查询的列
     ALLOWED_QUERY_KEYS = {
         "id",
+        "tid",
         "uin",
+        "name",
         "gin",
         "status",
         "anon",
@@ -74,14 +80,16 @@ class PostManager:
     def _row_to_post(row) -> Post:
         return Post(
             id=row[0],
-            uin=row[1],
-            gin=row[2],
-            text=row[3],
-            images=json.loads(row[4]),
-            anon=bool(row[5]),
-            status=row[6],
-            create_time=row[7],
-            extra_text=row[8],
+            tid=row[1],
+            uin=row[2],
+            name=row[3],
+            gin=row[4],
+            text=row[5],
+            images=json.loads(row[6]),
+            anon=bool(row[7]),
+            status=row[8],
+            create_time=row[9],
+            extra_text=row[10],
         )
 
     @staticmethod
@@ -94,7 +102,9 @@ class PostManager:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS posts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tid TEXT NOT NULL DEFAULT '',
                     uin INTEGER NOT NULL,
+                    name TEXT NOT NULL,
                     gin INTEGER NOT NULL,
                     text TEXT NOT NULL,
                     images TEXT NOT NULL CHECK(json_valid(images)),
@@ -111,11 +121,13 @@ class PostManager:
         async with aiosqlite.connect(self.db_path) as db:
             cur = await db.execute(
                 """
-                INSERT INTO posts (uin, gin, text, images, anon, status, create_time, extra_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO posts (tid, uin, name, gin, text, images, anon, status, create_time, extra_text)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    post.tid,
                     post.uin,
+                    post.name,
                     post.gin,
                     post.text,
                     self._encode_images(post.images),
@@ -135,7 +147,9 @@ class PostManager:
         *,
         key: typing.Literal[
             "id",
+            "tid",
             "uin",
+            "name",
             "gin",
             "status",
             "anon",
@@ -160,7 +174,10 @@ class PostManager:
         self,
         post_id: int,
         key: typing.Literal[
+            "id",
+            "tid",
             "uin",
+            "name",
             "gin",
             "status",
             "anon",

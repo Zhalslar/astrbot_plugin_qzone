@@ -4,6 +4,7 @@ import aiohttp
 from astrbot.core.message.components import Image, Reply
 from astrbot.core.platform import AstrMessageEvent
 from astrbot.api import logger
+from data.plugins.astrbot_plugin_qzone.core.post import Post
 
 BytesOrStr = Union[str, bytes]
 
@@ -129,3 +130,35 @@ def parse_qzone_visitors(data: dict) -> str:
             lines.append(f"   └─ 带来了{names}")
 
     return "\n".join(lines)
+
+def emotion_to_posts(data: dict) -> list[Post]:
+    """
+    从 QQ 空间 JSON 数据中提取每条说说，转化为 Post 列表。
+    """
+    if not data.get("msglist"):
+        return []
+
+    posts = []
+    for p in data["msglist"]:
+        urls = []
+        for img_data in p.get("pic", []):
+            for key in ("url2", "url3", "url1", "smallurl"):
+                if raw := img_data.get(key):
+                    urls.append(raw)
+                    break
+
+        post = Post(
+            tid=p.get("tid", 0),
+            uin=p.get("uin", 0),
+            name=p.get("name", ""),
+            gin=0,
+            text=p.get("content", "").strip(),
+            images=urls,
+            anon=False,
+            status="approved",
+            create_time=p.get("created_time", 0),
+            extra_text=p.get("source_name"),
+        )
+        posts.append(post)
+
+    return posts

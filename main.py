@@ -239,6 +239,7 @@ class QzonePlugin(Star):
             user_id=post.uin,
         )
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("查看稿件")
     async def check_post(self, event: AiocqhttpMessageEvent, post_id: int = -1):
         post = await self.pm.get(key="id", value=post_id)
@@ -262,6 +263,7 @@ class QzonePlugin(Star):
         chain = self.post_to_chain(title, post)
         yield event.chain_result(chain)
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("查看访客")
     async def visitor(self, event: AiocqhttpMessageEvent):
         """查看访客"""
@@ -280,6 +282,7 @@ class QzonePlugin(Star):
         msg = f"点赞完成，成功 {sum(results)}/{len(posts)} 次"
         yield event.plain_result(msg)
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("评论说说")
     async def comment(
         self, event: AiocqhttpMessageEvent, post_id: int, content: str = ""
@@ -297,7 +300,7 @@ class QzonePlugin(Star):
         )
         msg = (
             f"已评论说说#{post_id}: {content}"
-            if "非法请求" in res
+            if "非法请求" in res.__str__()
             else "非法请求, 评论失败"
         )
         yield event.plain_result(msg)

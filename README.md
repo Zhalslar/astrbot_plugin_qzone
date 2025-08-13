@@ -16,7 +16,7 @@ _✨ [astrbot](https://github.com/AstrBotDevs/AstrBot) QQ空间对接插件 ✨_
 
 ## 🤝 介绍
 
-QQ空间对接插件, 可自动发说说、表白墙投稿审核
+QQ空间对接插件, 可自动发说说、表白墙投稿审核、查看说说、点赞、评论等
 
 ## 📦 安装
 
@@ -60,7 +60,8 @@ git clone https://github.com/Zhalslar/astrbot_plugin_qzone
 
 - [x] 发说说
 - [x] 校园表白墙功能：投稿、审核投稿
-- [ ] 空间点赞、评论
+- [x] 点赞说说
+- [ ] 评论说说
 - [ ] 定时自动发说说
 - [ ] LLM发说说
 

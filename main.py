@@ -24,7 +24,7 @@ from .core.api import QzoneAPI
     "astrbot_plugin_qzone",
     "Zhalslar",
     "QQ空间对接插件",
-    "v1.0.1",
+    "v1.0.2",
 )
 class QzonePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -137,7 +137,7 @@ class QzonePlugin(Star):
         post = Post(
             uin=int(event.get_sender_id()),
             name=event.get_sender_name(),
-            gin=int(event.get_group_id()),
+            gin=int(event.get_group_id() or 0),
             text=event.message_str.removeprefix("发说说").strip(),
             images=await get_image_urls(event),
             anon=False,
@@ -156,7 +156,7 @@ class QzonePlugin(Star):
         post = Post(
             uin=int(event.get_sender_id()),
             name=event.get_sender_name(),
-            gin=int(event.get_group_id()),
+            gin=int(event.get_group_id() or 0),
             text=event.message_str.removeprefix("投稿").strip(),
             images=await get_image_urls(event),
             anon=False,

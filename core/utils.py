@@ -1,12 +1,39 @@
-import datetime
-from typing import Sequence, Union
-import aiohttp
-from astrbot.core.message.components import Image, Reply
-from astrbot.core.platform import AstrMessageEvent
-from astrbot.api import logger
-from data.plugins.astrbot_plugin_qzone.core.post import Post
 
-BytesOrStr = Union[str, bytes]
+from collections.abc import Sequence
+from typing import Union
+
+import aiohttp
+
+from astrbot.api import logger
+from astrbot.core.message.components import At, Image, Reply
+from astrbot.core.platform import AstrMessageEvent
+from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
+    AiocqhttpMessageEvent,
+)
+
+BytesOrStr = Union[str, bytes]  # noqa: UP007
+
+
+def get_ats(event: AiocqhttpMessageEvent) -> list[str]:
+    """获取被at者们的id列表"""
+    return [
+        str(seg.qq)
+        for seg in event.get_messages()[1:]
+        if isinstance(seg, At)
+    ]
+
+async def get_nickname(event: AiocqhttpMessageEvent, user_id) -> str:
+    """获取指定群友的群昵称或Q名"""
+    client = event.bot
+    group_id = event.get_group_id()
+    if group_id:
+        member_info = await client.get_group_member_info(
+            group_id=int(group_id), user_id=int(user_id)
+        )
+        return member_info.get("card") or member_info.get("nickname")
+    else:
+        stranger_info = await client.get_stranger_info(user_id=int(user_id))
+        return stranger_info.get("nickname")
 
 async def download_file(url: str) -> bytes | None:
     """下载图片"""
@@ -49,7 +76,6 @@ def get_reply_message_str(event: AstrMessageEvent) -> str | None:
         "",
     )
 
-
 async def normalize_images(images: Sequence[BytesOrStr] | None) -> list[bytes]:
     """
     将 str/bytes 混合列表统一转成 bytes 列表：
@@ -74,91 +100,6 @@ async def normalize_images(images: Sequence[BytesOrStr] | None) -> list[bytes]:
 
 
 
-def parse_qzone_visitors(data: dict) -> str:
-    """
-    把 QQ 空间访客接口的数据解析成易读文本。
-    """
-    lines = []
 
-    # 1. 统计摘要
-    lines.append(f"📊 今日访客：{data.get('todaycount', 0)} 人")
-    lines.append(f"📈 最近 30 天访客：{data.get('totalcount', 0)} 人")
-    lines.append("")
 
-    # 2. 逐条访客
-    items = data.get("items", [])
-    if not items:
-        lines.append("暂无访客记录")
-        return "\n".join(lines)
 
-    lines.append("👀 最近来访明细：")
-    for idx, v in enumerate(items, 1):
-        # 基本信息
-        name = v.get("name", "匿名")
-        qq = v.get("uin", "0")
-        ts = v.get("time", 0)
-        dt = datetime.datetime.fromtimestamp(ts).strftime("%m-%d %H:%M")
-
-        # 渠道
-        src_map = {
-            0: "访问空间",
-            13: "查看动态",
-            32: "手机QQ",
-            41: "国际版QQ/TIM",
-        }
-        src = src_map.get(v.get("src"), f"未知({v.get('src')})")
-
-        # 黄钻
-        yellow = v.get("yellow", -1)
-        vip_info = f"(LV{yellow})" if yellow > 0 else ""
-
-        # 隐身
-        hide = " (隐身)" if v.get("is_hide_visit") else ""
-
-        lines.append(f"\n·{dt}\n{name}{vip_info}{hide}{src}")
-
-        # 说说快照
-        shuos = v.get("shuoshuoes", [])
-        if shuos:
-            title = shuos[0].get("name", "")
-            lines.append(f"   └─ 说说：{title}")
-
-        # 带来的人
-        brought = v.get("uins", [])
-        if brought:
-            names = ",".join(u.get("name", "") for u in brought)
-            lines.append(f"   └─ 带来了{names}")
-
-    return "\n".join(lines)
-
-def emotion_to_posts(data: dict) -> list[Post]:
-    """
-    从 QQ 空间 JSON 数据中提取每条说说，转化为 Post 列表。
-    """
-    if not data.get("msglist"):
-        return []
-
-    posts = []
-    for p in data["msglist"]:
-        urls = []
-        for img_data in p.get("pic", []):
-            for key in ("url2", "url3", "url1", "smallurl"):
-                if raw := img_data.get(key):
-                    urls.append(raw)
-                    break
-
-        post = Post(
-            tid=p.get("tid", 0),
-            uin=p.get("uin", 0),
-            name=p.get("name", ""),
-            gin=0,
-            text=p.get("content", "").strip(),
-            images=urls,
-            anon=False,
-            status="approved",
-            create_time=p.get("created_time", 0),
-            extra_text=p.get("source_name"),
-        )
-        posts.append(post)
-
-    return posts

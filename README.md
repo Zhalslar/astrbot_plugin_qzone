@@ -14,6 +14,8 @@ _✨ [astrbot](https://github.com/AstrBotDevs/AstrBot) QQ空间对接插件 ✨_
 
 </div>
 
+# V2.0.0+已上线公测，llm模块开发中，功能尚处于测试阶段，请勿用于生产环境
+
 ## 🤝 介绍
 
 QQ空间对接插件, 可自动发说说、表白墙投稿审核、查看说说、点赞、评论等
@@ -51,6 +53,9 @@ git clone https://github.com/Zhalslar/astrbot_plugin_qzone
 | 查看访客   | 无                             | 获取并显示 QQ 空间最近访客列表   | 管理员     |
 | 点赞说说   | 数量（可选，默认 10）          | 对最近 N 条说说批量点赞      | 所有人     |
 | 评论说说   | 稿件 ID + 评论内容             | 对指定稿件对应的说说发表评论       | 管理员    |
+| 写日记（可引用图片）   | 无             | 自动发一条 QQ 空间日记， 引用的图片作为配图     | 管理员    |
+| 定时发说说（定时触发）   | 无             | 请在配置面板中设置触发时间     | 管理员    |
+| 定时评论好友说说（定时触发）   | 无             | 请在配置面板中设置触发时间    | 管理员    |
 
 ### 效果图
 
@@ -60,10 +65,13 @@ git clone https://github.com/Zhalslar/astrbot_plugin_qzone
 
 - [x] 发说说
 - [x] 校园表白墙功能：投稿、审核投稿
-- [x] 点赞说说
-- [ ] 评论说说
-- [ ] 定时自动发说说
-- [ ] LLM发说说
+- [x] 点赞说说（接口显示成功，但实测点赞无效）
+- [x] 评论说说
+- [x] 定时自动发说说、日记
+- [x] 定时自动评论、点赞好友的说说
+- [x] LLM发说说
+- [ ] LLM配图
+- [ ] 更丰富的说说主题
 
 ## 👥 贡献指南
 
@@ -78,4 +86,4 @@ git clone https://github.com/Zhalslar/astrbot_plugin_qzone
 
 ## 🤝 鸣谢
 
-- [CampuxBot项目](https://github.com/idoknow/CampuxBot)
+- 部分代码参考了[CampuxBot项目](https://github.com/idoknow/CampuxBot)，由作者之一的Soulter推荐

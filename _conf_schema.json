@@ -3,5 +3,47 @@
         "description": "管理群",
         "type": "string",
         "hint": "bot收到的投稿将在管理群里审批，不填则将审批信息私发给bot管理员"
+    },
+    "pillowmd_style_dir":{
+        "description": "Pillowmd样式目录路径",
+        "type": "string",
+        "hint": "例如 C:\\styles\\my-style 或 /data/styles/default, 留空则使用默认样式。pillowmd用于渲染说说内容",
+        "default": ""
+    },
+    "comment_prompt":{
+        "description": "评论说说的llm提示词",
+        "type": "text",
+        "hint": "插件会自动将提示词注入到llm的system_prompt中",
+        "default": "请根据帖子内容生成一条精辟简短的评论, 评论要抓住主题"
+    },
+    "diary_prompt":{
+        "description": "写日记的llm提示词",
+        "type": "text",
+        "hint": "插件会自动将提示词注入到llm的system_prompt中",
+        "default": "请从聊天记录中找出一个你感兴趣的主题来写日记，要求必须围绕此主题，如果是负面主题则吐槽，正面主题则感慨"    
+    },
+    "diary_max_msg":{
+        "description": "用于写日记的聊天记录的最大条数",
+        "type": "int",
+        "hint": "过长会爆上下文",
+        "default": 200
+    },
+    "pulish_cron": {
+        "description": "自动发说说时间间隔",
+        "type": "string",
+        "hint": "格式为0 0 0 0 0 0，这6个位数表示秒、分、时、日、月、周，*表示任意，只填0表示不启用定时任务。示例：“0 30 23 * * *” 表示每天23点半点执行一次",
+        "default": "0 30 23 * * *"
+    },
+    "comment_cron":{
+        "description": "自动评论时间间隔",
+        "type": "string",
+        "hint": "格式为0 0 0 0 0 0，这6个位数表示秒、分、时、日、月、周，*表示任意，只填0表示不启用定时任务。 示例：“0 8 * * 1” 表示每周一早上8点执行一次",
+        "default": "0 8 * * 1"
+    },
+    "per_qzone_num":{
+        "description": "获取好友最近说说的数量",
+        "type": "int",
+        "hint": "决定每次获取的QQ空间最近说说的数量，用于定时自动点赞、评论，注意：评论过的说说会自动跳过",
+        "default": 20
     }
 }

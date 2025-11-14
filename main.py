@@ -1,72 +1,97 @@
-import asyncio
-from datetime import datetime
-import re
+# main.py
+
 import time
+from http.cookies import SimpleCookie
+from pathlib import Path
+
+import pillowmd
+
+from astrbot.api import logger
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core import AstrBotConfig
-from astrbot.api import logger
 from astrbot.core.message.components import BaseMessageComponent, Image, Plain
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
+from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
+    AiocqhttpAdapter,
+)
+from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+
+from .core.auto_comment import AutoComment
+from .core.auto_publish import AutoPublish
+from .core.llm_action import LLMAction
 from .core.post import Post, PostManager
+from .core.qzone_api import Qzone
 from .core.utils import (
+    get_ats,
     get_image_urls,
-    get_reply_message_str,
-    parse_qzone_visitors,
 )
-from .core.api import QzoneAPI
 
 
-@register(
-    "astrbot_plugin_qzone",
-    "Zhalslar",
-    "QQ空间对接插件",
-    "v1.0.2",
-)
+@register("astrbot_plugin_qzone", "Zhalslar", "...", "...")
 class QzonePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
+        self.context = context
+        self.config = config
         # 管理群ID，审批信息会发到此群
         self.manage_group: int = config.get("manage_group", 0)
+        # pillowmd样式目录
+        default_style_dir = (
+            Path(get_astrbot_data_path()) / "plugins/astrbot_plugin_qzone/default_style"
+        )
+        self.pillowmd_style_dir = config.get("pillowmd_style_dir") or default_style_dir
         # 管理员QQ号列表，审批信息会私发给这些人
         self.admins_id: list[str] = list(set(context.get_config().get("admins_id", [])))
         # 数据库文件
-        db_path = StarTools.get_data_dir("astrbot_plugin_qzone") / "posts.db"
+        db_path = StarTools.get_data_dir("astrbot_plugin_qzone") / "posts_v2.db"
+        # 缓存
+        self.cache = StarTools.get_data_dir("astrbot_plugin_qzone") / "cache"
+        self.cache.mkdir(parents=True, exist_ok=True)
         # 数据库管理类
         self.pm = PostManager(db_path)
-        # QQ空间API类
-        self.qzone = QzoneAPI()
+        # llm内容生成器
+        self.llm = LLMAction(context, config)
+        # QQ空间API
+        self.qzone: Qzone
 
     async def initialize(self):
+        # 初始化数据库
         await self.pm.init_db()
+        # 实例化pillowmd样式
+        try:
+            self.style = pillowmd.LoadMarkdownStyles(self.pillowmd_style_dir)
+        except Exception as e:
+            logger.error(f"无法加载pillowmd样式：{e}")
+        # 初始化AiocqhttpAdapter的Qzone（只取首个）
+        for inst in self.context.platform_manager.platform_insts:
+            if isinstance(inst, AiocqhttpAdapter):
+                self.client = inst.get_client()
+                await self.initialize_qzone()
+                break
+        # 初始化自动评论器
+        if self.qzone and self.client and self.llm:
+            self.auto_comment = AutoComment(
+                self.context, self.config, self.qzone, self.client, self.llm
+            )
+            self.auto_pulish = AutoPublish(
+                self.context, self.config, self.qzone, self.client, self.llm
+            )
 
-    def post_to_chain(self, title: str, post: Post) -> list[BaseMessageComponent]:
-        """稿件信息->易读消息"""
-        status_map = {
-            "pending": "待审核",
-            "approved": "已发布",
-            "rejected": "被拒绝",
-        }
-        lines = [f"{title}{status_map.get(post.status, post.status)}"]
-        lines += [
-            f"时间：{datetime.fromtimestamp(post.create_time).strftime('%Y-%m-%d %H:%M')}",
-            f"用户：{post.name}({post.uin})",
-        ]
-        if post.gin:
-            lines.append(f"群聊：{post.gin}")
-        if post.anon:
-            lines.append("匿名：是")
-        lines += [
-            "------------------",
-            f"{post.text}",
-        ]
-        chain: list[BaseMessageComponent] = [Plain("\n".join(lines))]
-        for url in post.images:
-            chain.append(Image.fromURL(url))
-        return chain
+    async def initialize_qzone(self):
+        """初始化Qzone"""
+        try:
+            cookie_str = (
+                await self.client.get_cookies(domain="user.qzone.qq.com")
+            ).get("cookies", "")
+            self.cookies = {k: v.value for k, v in SimpleCookie(cookie_str).items()}
+            self.qzone = Qzone(self.cookies)
+            logger.info(f"Qzone 初始化成功: {self.cookies}")
+        except Exception as e:
+            logger.error(f"Qzone 初始化失败: {e}")
 
     async def notice_admin(
         self, event: AiocqhttpMessageEvent, chain: list[BaseMessageComponent]
@@ -122,33 +147,20 @@ class QzonePlugin(Star):
         elif self.admins_id:
             await send_to_user()
 
-    def extract_post_id(self, event: AiocqhttpMessageEvent) -> int | None:
-        """从引用消息中提取稿件 ID"""
-        content = get_reply_message_str(event)
-        if not content or "新投稿" not in content:
-            return None
-        match = re.search(r"新投稿#(\d+)", content)
-        return int(match.group(1)) if match else None
-
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("发说说")
+    @filter.command("发布说说", alias={"发说说"})
     async def publish_emotion(self, event: AiocqhttpMessageEvent):
         """直接发说说，无需审核"""
-        post = Post(
-            uin=int(event.get_sender_id()),
-            name=event.get_sender_name(),
-            gin=int(event.get_group_id() or 0),
-            text=event.message_str.removeprefix("发说说").strip(),
-            images=await get_image_urls(event),
-            anon=False,
-            status="approved",
-            create_time=int(time.time()),
+        text = event.message_str.removeprefix("发说说").removeprefix("发布说说").strip()
+        images = await get_image_urls(event)
+        await self.qzone.publish_emotion(text, images)
+        posts: list[Post] = await self.qzone.get_qzones(target_id=event.get_self_id())
+        post = posts[0]
+        img = await self.style.AioRender(
+            text=post.to_str(), useImageUrl=True, autoPage=False
         )
-        post_id = await self.pm.add(post)
-        tid = await self.qzone.publish_emotion(client=event.bot, post=post)
-        await self.pm.update(post_id, key="tid", value=tid)
-        yield event.plain_result(f"已发布说说#{post_id}")
-        logger.info(f"已发布说说#{post_id}, 说说tid: {tid}")
+        img_path = img.Save(self.cache)
+        yield event.image_result(str(img_path))
 
     @filter.command("投稿")
     async def submit(self, event: AiocqhttpMessageEvent):
@@ -169,20 +181,17 @@ class QzonePlugin(Star):
         yield event.plain_result(f"您的稿件#{post_id}已提交，请耐心等待审核")
 
         # 通知管理员
-        title = f"【新投稿#{post_id}】"
-        chain = self.post_to_chain(title, post)
-        await self.notice_admin(event, chain)
+        img = await self.style.AioRender(
+            text=post.to_str(), useImageUrl=True, autoPage=False
+        )
+        img_path = img.Save(self.cache)
+        await self.notice_admin(event, [Image.fromFileSystem(str(img_path))])
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("通过")
-    async def approve(self, event: AiocqhttpMessageEvent):
-        """(引用稿件)通过"""
-        post_id = self.extract_post_id(event)
-        if not post_id:
-            yield event.plain_result("未检测到稿件ID")
-            return
-
+    @filter.command("通过投稿")
+    async def approve(self, event: AiocqhttpMessageEvent, post_id: int):
+        """通过投稿 <稿件ID>"""
         # 更新稿件状态
         await self.pm.update(post_id, key="status", value="approved")
         post = await self.pm.get(key="id", value=post_id)
@@ -190,17 +199,20 @@ class QzonePlugin(Star):
             return
 
         # 发布说说
-        tid = await self.qzone.publish_emotion(client=event.bot, post=post)
+        tid = await self.qzone.publish_emotion(text=post.text, images=post.images)
         await self.pm.update(post_id, key="tid", value=tid)
 
         # 通知管理员
         yield event.plain_result(f"已发布说说#{post_id}")
 
         # 通知投稿者
-        title = f"【您的投稿#{post_id}】"
+        img = await self.style.AioRender(
+            text=post.to_str(), useImageUrl=True, autoPage=False
+        )
+        img_path = img.Save(self.cache)
         await self.notice_user(
             event,
-            chain=self.post_to_chain(title, post),
+            chain=[Image.fromFileSystem(str(img_path))],
             group_id=post.gin,
             user_id=post.uin,
         )
@@ -208,13 +220,9 @@ class QzonePlugin(Star):
         logger.info(f"已发布说说#{post_id}, 说说tid: {tid}")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("不通过")
-    async def reject(self, event: AiocqhttpMessageEvent):
-        """(引用稿件)不通过 <原因>"""
-        post_id = self.extract_post_id(event)
-        if not post_id:
-            yield event.plain_result("未检测到稿件ID")
-            return
+    @filter.command("拒绝投稿")
+    async def reject(self, event: AiocqhttpMessageEvent, post_id: int):
+        """拒绝投稿 <稿件ID> <原因>"""
         # 更新稿件状态
         await self.pm.update(post_id, key="status", value="rejected")
         post = await self.pm.get(key="id", value=post_id)
@@ -246,66 +254,94 @@ class QzonePlugin(Star):
         if not post:
             yield event.plain_result(f"稿件#{post_id}不存在")
             return
-        title = f"【稿件#{post_id}】"
-        chain = self.post_to_chain(title, post)
-        yield event.chain_result(chain)
-
-    @filter.command("查看说说")
-    async def emotion(self, event: AiocqhttpMessageEvent, num: int = 1):
-        """查看说说 <序号>"""
-        posts = await self.qzone.get_emotion(client=event.bot, num=num)
-        post = posts[-1]
-        if p := await self.pm.get(key="tid", value=post.tid):
-            post_id = p.id
-        else:
-            post_id = await self.pm.add(post)
-        title = f"【说说#{post_id}】"
-        chain = self.post_to_chain(title, post)
-        yield event.chain_result(chain)
+        img = await self.style.AioRender(
+            text=post.to_str(), useImageUrl=True, autoPage=False
+        )
+        img_path = img.Save(self.cache)
+        yield event.image_result(str(img_path))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("查看访客")
     async def visitor(self, event: AiocqhttpMessageEvent):
         """查看访客"""
-        data = (await self.qzone.get_visitor(client=event.bot))["data"]
-        msg = parse_qzone_visitors(data)
-        yield event.plain_result(msg)
+        data = (await self.qzone.get_visitor())["data"]
+        text = self.qzone.parse_qzone_visitors(data)
+        img = await self.style.AioRender(text=text, useImageUrl=True, autoPage=True)
+        img_path = img.Save(self.cache)
+        yield event.image_result(str(img_path))
+
+    async def get_post(self, event: AiocqhttpMessageEvent) -> Post:
+        """获取说说，返回Post对象"""
+        at_ids = get_ats(event)
+        target_id = at_ids[0] if at_ids else event.get_sender_id()
+        end_parm = event.message_str.split(" ")[-1]
+        index = int(end_parm) if end_parm.isdigit() else 1
+        posts: list[Post] = await self.qzone.get_qzones(target_id=target_id, pos=index)
+        if posts:
+            return posts[0]
+        else:
+            await event.send(event.plain_result("没发现有说说"))
+            event.stop_event()
+            raise StopIteration
+
+    @filter.command("查看说说")
+    async def view_qzone(self, event: AiocqhttpMessageEvent):
+        """查看说说 <@群友> <序号>"""
+        post = await self.get_post(event)
+        img = await self.style.AioRender(
+            text=post.to_str(), useImageUrl=True, autoPage=False
+        )
+        img_path = img.Save(self.cache)
+        yield event.image_result(str(img_path))
 
     @filter.command("点赞说说")
-    async def like(self, event: AiocqhttpMessageEvent, num: int = 10):
-        """点赞 <说说数量>"""
-        posts = await self.qzone.get_emotion(client=event.bot, num=num)
-        results = await asyncio.gather(
-            *[self.qzone.like(client=event.bot, tid=p.tid) for p in posts],
-            return_exceptions=False,
-        )  # 并发点赞，返回 True/False 列表
-        msg = f"点赞完成，成功 {sum(results)}/{len(posts)} 次"
-        yield event.plain_result(msg)
+    async def like(self, event: AiocqhttpMessageEvent):
+        """点赞说说 <@群友> <序号>"""
+        post = await self.get_post(event)
+        res = await self.qzone.like(fid=post.tid, target_id=str(post.uin))
+        if res.get("code") == 0:
+            yield event.plain_result(f"已给{post.name}的说说点赞: {post.text[:10]}")
+        else:
+            yield event.plain_result(f"点赞说说失败: {res}")
+            logger.error(f"点赞失败: {res}")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("评论说说")
-    async def comment(
-        self, event: AiocqhttpMessageEvent, post_id: int, content: str = ""
-    ):
-        """评论 <内容>"""
-        post_id = post_id if isinstance(post_id, int) else post_id.removeprefix("#")
-        post = await self.pm.get(value=post_id)
-        if not post:
-            yield event.plain_result(f"稿件#{post_id}不存在")
-            return
+    async def comment(self, event: AiocqhttpMessageEvent):
+        """评论说说 <@群友> <序号>"""
+        post = await self.get_post(event)
+        content = await self.llm.generate_comment(post)
         res = await self.qzone.comment(
-            client=event.bot,
-            tid=post.tid,
+            fid=post.tid,
+            target_id=str(post.uin),
             content=content,
         )
-        msg = (
-            f"已评论说说#{post_id}: {content}"
-            if "非法请求" in res.__str__()
-            else "非法请求, 评论失败"
+        if res.get("code") == 0:
+            yield event.plain_result(
+                f"已评论{post.name}的说说({post.text[:6]}...): {content}"
+            )
+        else:
+            yield event.plain_result(f"评论失败: {res}")
+            logger.error(f"评论失败: {res}")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("写日记")
+    async def keep_diary(self, event: AiocqhttpMessageEvent):
+        """根据聊天记录总结、发布日记"""
+        diary_text = await self.llm.generate_diary(
+            client=self.client, group_id=event.get_group_id()
         )
-        yield event.plain_result(msg)
+        await self.qzone.publish_emotion(text=diary_text)
+        posts: list[Post] = await self.qzone.get_qzones(target_id=event.get_self_id())
+        post = posts[0]
+        img = await self.style.AioRender(
+            text=post.to_str(), useImageUrl=True, autoPage=False
+        )
+        img_path = img.Save(self.cache)
+        yield event.image_result(str(img_path))
 
     async def terminate(self):
         """插件卸载时关闭Qzone API网络连接"""
         await self.qzone.terminate()
-        logger.info("已关闭Qzone API网络连接")
+        await self.auto_comment.terminate()
+        await self.auto_pulish.terminate()

@@ -15,6 +15,7 @@ from .utils import emotion_to_posts, normalize_images
 
 BytesOrStr = Union[str, bytes]
 
+
 # ---------- 工具函数 ----------
 def _generate_gtk(skey: str) -> str:
     """生成 QQ 空间 gtk"""
@@ -44,12 +45,15 @@ def _parse_upload_result(payload: dict[str, Any]) -> Tuple[str, str]:
     )
     return picbo, richval
 
+
 class _QzoneURL:
     BASE = "https://user.qzone.qq.com"
     H5_BASE = "https://h5.qzone.qq.com"
     UPLOAD = "https://up.qzone.qq.com/cgi-bin/upload/cgi_upload_image"
     EMOTION = f"{BASE}/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6"
-    VISITOR = f"{H5_BASE}/proxy/domain/g.qzone.qq.com/cgi-bin/friendshow/cgi_get_visitor_more"
+    VISITOR = (
+        f"{H5_BASE}/proxy/domain/g.qzone.qq.com/cgi-bin/friendshow/cgi_get_visitor_more"
+    )
     LIKE = f"{H5_BASE}/proxy/domain/w.qzone.qq.com/cgi-bin/likes/internal_dolike_app"
     FEED_LIST = f"{BASE}/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_msglist_v6"
     COMMENT = f"{BASE}/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_re_feeds"
@@ -100,7 +104,6 @@ class QzoneAPI:
         )
         logger.info(f"QQ 空间登录成功: {cookies}")
 
-
     async def _request(
         self,
         method: str,
@@ -143,7 +146,9 @@ class QzoneAPI:
         }
 
     # ---------------- 业务方法 ----------------
-    async def token_valid(self, client: CQHttp, max_retry: int = 3, backoff: float = 1.0) -> bool:
+    async def token_valid(
+        self, client: CQHttp, max_retry: int = 3, backoff: float = 1.0
+    ) -> bool:
         """验证当前登录态是否可用"""
         for attempt in range(max_retry):
             try:
@@ -248,7 +253,6 @@ class QzoneAPI:
         )
         return res.get("tid", "")
 
-
     async def like(self, client: CQHttp, tid: str):
         """给说说点赞"""
         await self.login(client)
@@ -282,7 +286,6 @@ class QzoneAPI:
             return True
         except Exception:
             return False
-
 
     async def get_emotion(self, client: CQHttp, num: int = 10) -> list[Post]:
         """
@@ -342,8 +345,6 @@ class QzoneAPI:
             return res
         except (IndexError, KeyError):
             raise RuntimeError("拉不到说说列表")
-
-
 
     async def terminate(self) -> None:
         await self._session.close()

@@ -26,14 +26,13 @@ class AutoComment:
         client: CQHttp,
         llm: LLMAction,
     ):
-        self.context = context
         self.qzone = qzone
         self.client = client
         self.llm = llm
 
         self.per_qzone_num = config.get("per_qzone_num", 5)
 
-        tz = self.context.get_config().get("timezone")
+        tz = context.get_config().get("timezone")
         self.timezone = (
             zoneinfo.ZoneInfo(tz) if tz else zoneinfo.ZoneInfo("Asia/Shanghai")
         )
@@ -43,7 +42,7 @@ class AutoComment:
         cron_cfg = config.get("pulish_cron", "0 8 * * 1")
         self.register_task(cron_cfg)
 
-        logger.info(f"[QzoneScheduler] 已启动，任务周期：{cron_cfg}")
+        logger.info(f"[AutoComment] 已启动，任务周期：{cron_cfg}")
 
 
     def register_task(self, cron_expr: str):
@@ -58,9 +57,8 @@ class AutoComment:
                 name="qzone_auto_like_comment",
                 max_instances=1,
             )
-            logger.info(f"[QzoneScheduler] 已注册任务：{cron_expr}")
         except Exception as e:
-            logger.error(f"[QzoneScheduler] Cron 格式错误：{e}")
+            logger.error(f"[AutoComment] Cron 格式错误：{e}")
 
 
     async def get_friend_ids(self) -> list[int]:
@@ -71,26 +69,26 @@ class AutoComment:
             res = await self.client.get_friend_list()
             return [f["user_id"] for f in res]
         except Exception as e:
-            logger.error(f"[QzoneScheduler] 获取好友失败：{e}")
+            logger.error(f"[AutoComment] 获取好友失败：{e}")
             return []
 
     async def run_once(self):
         """执行一次完整的遍历 + 点赞 + 评论"""
-        logger.info("[QzoneScheduler] 开始自动遍历好友说说...")
+        logger.info("[AutoComment] 开始自动遍历好友说说...")
 
         friend_ids = await self.get_friend_ids()
         if not friend_ids:
-            logger.warning("[QzoneScheduler] 无好友，跳过")
+            logger.warning("[AutoComment] 无好友，跳过")
             return
 
         for uin in friend_ids:
             try:
                 await self.process_friend(uin)
             except Exception as e:
-                logger.error(f"[QzoneScheduler] 处理好友 {uin} 失败：{e}")
+                logger.error(f"[AutoComment] 处理好友 {uin} 失败：{e}")
                 await asyncio.sleep(1)
 
-        logger.info("[QzoneScheduler] 本轮任务结束")
+        logger.info("[AutoComment] 本轮任务结束")
 
 
     async def process_friend(self, uin: int):
@@ -113,16 +111,16 @@ class AutoComment:
         try:
             res = await self.qzone.like(fid=post.tid, target_id=str(post.uin))
             if res.get("code") == 0:
-                logger.info(f"[QzoneScheduler] 已点赞: {post.uin}/{post.tid}")
+                logger.info(f"[AutoComment] 已点赞: {post.uin}/{post.tid}")
             else:
-                logger.warning(f"[QzoneScheduler] 点赞失败: {res}")
+                logger.warning(f"[AutoComment] 点赞失败: {res}")
         except Exception as e:
-            logger.error(f"[QzoneScheduler] 点赞异常: {e}")
+            logger.error(f"[AutoComment] 点赞异常: {e}")
 
 
     async def comment_post(self, post: Post):
         if not self.llm:
-            logger.warning("[QzoneScheduler] 未提供 llm，跳过评论")
+            logger.warning("[AutoComment] 未提供 llm，跳过评论")
             return
 
         try:
@@ -134,14 +132,12 @@ class AutoComment:
                 content=content,
             )
             if res.get("code") == 0:
-                logger.info(
-                    f"[QzoneScheduler] 已评论: {post.uin}/{post.tid} -> {content}"
-                )
+                logger.info(f"[AutoComment] 已评论: {post.uin}/{post.tid} -> {content}")
             else:
-                logger.warning(f"[QzoneScheduler] 评论失败: {res}")
+                logger.warning(f"[AutoComment] 评论失败: {res}")
         except Exception as e:
-            logger.error(f"[QzoneScheduler] 评论异常: {e}")
+            logger.error(f"[AutoComment] 评论异常: {e}")
 
     async def terminate(self):
         self.scheduler.remove_all_jobs()
-        logger.info("[QzoneScheduler] 已停止")
+        logger.info("[AutoComment] 已停止")

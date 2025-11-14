@@ -11,7 +11,7 @@ from .llm_action import LLMAction
 from .qzone_api import Qzone
 
 
-class AutoPubilish:
+class AutoPublish:
     """
     自动发说说任务类
     """
@@ -24,25 +24,23 @@ class AutoPubilish:
         client: CQHttp,
         llm: LLMAction,
     ):
-        self.context = context
-        self.config = config
         self.qzone = qzone
         self.client = client
         self.llm = llm
 
-        self.per_qzone_num = self.config.get("per_qzone_num", 5)
+        self.per_qzone_num = config.get("per_qzone_num", 5)
 
-        tz = self.context.get_config().get("timezone")
+        tz = context.get_config().get("timezone")
         self.timezone = (
             zoneinfo.ZoneInfo(tz) if tz else zoneinfo.ZoneInfo("Asia/Shanghai")
         )
 
         self.scheduler = AsyncIOScheduler(timezone=self.timezone)
         self.scheduler.start()
-        cron_cfg = self.config.get("pulish_cron", "45 1 * * *")
+        cron_cfg = config.get("pulish_cron", "45 1 * * *")
         self.register_task(cron_cfg)
 
-        logger.info(f"[QzoneScheduler] 已启动，任务周期：{cron_cfg}")
+        logger.info(f"[AutoPublish] 已启动，任务周期：{cron_cfg}")
 
 
     def register_task(self, cron_expr: str):
@@ -57,17 +55,18 @@ class AutoPubilish:
                 name="qzone_auto_publish",
                 max_instances=1,
             )
-            logger.info(f"[QzoneScheduler] 已注册任务：{cron_expr}")
         except Exception as e:
-            logger.error(f"[QzoneScheduler] Cron 格式错误：{e}")
+            logger.error(f"[AutoPublish] Cron 格式错误：{e}")
 
     async def run_once(self):
         """
         计划任务执行一次自动发说说
         """
-        logger.info("[AutoQzonePoster] 执行自动发说说任务")
+        logger.info("[AutoPublish] 执行自动发说说任务")
 
         diary_text = await self.llm.generate_diary(client=self.client)
         await self.qzone.publish_emotion(text=diary_text)
 
-
+    async def terminate(self):
+        self.scheduler.remove_all_jobs()
+        logger.info("[AutoPublish] 已停止")

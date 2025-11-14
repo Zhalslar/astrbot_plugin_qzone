@@ -21,6 +21,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .core.auto_comment import AutoComment
+from .core.auto_publish import AutoPublish
 from .core.llm_action import LLMAction
 from .core.post import Post, PostManager
 from .core.qzone_api import Qzone
@@ -46,7 +47,7 @@ class QzonePlugin(Star):
         # 管理员QQ号列表，审批信息会私发给这些人
         self.admins_id: list[str] = list(set(context.get_config().get("admins_id", [])))
         # 数据库文件
-        db_path = StarTools.get_data_dir("astrbot_plugin_qzone") / "posts.db"
+        db_path = StarTools.get_data_dir("astrbot_plugin_qzone") / "posts_v2.db"
         # 缓存
         self.cache = StarTools.get_data_dir("astrbot_plugin_qzone") / "cache"
         self.cache.mkdir(parents=True, exist_ok=True)
@@ -72,8 +73,11 @@ class QzonePlugin(Star):
                 await self.initialize_qzone()
                 break
         # 初始化自动评论器
-        if self.qzone:
-            self.scheduler = AutoComment(
+        if self.qzone and self.client and self.llm:
+            self.auto_comment = AutoComment(
+                self.context, self.config, self.qzone, self.client, self.llm
+            )
+            self.auto_pulish = AutoPublish(
                 self.context, self.config, self.qzone, self.client, self.llm
             )
 
@@ -339,4 +343,5 @@ class QzonePlugin(Star):
     async def terminate(self):
         """插件卸载时关闭Qzone API网络连接"""
         await self.qzone.terminate()
-        await self.scheduler.terminate()
+        await self.auto_comment.terminate()
+        await self.auto_pulish.terminate()

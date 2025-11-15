@@ -270,6 +270,7 @@ class QzonePlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("查看稿件")
     async def check_post(self, event: AiocqhttpMessageEvent, post_id: int = -1):
+        "查看稿件 <ID>, 默认最新稿件"
         post = await self.pm.get(key="id", value=post_id)
         if not post:
             yield event.plain_result(f"稿件#{post_id}不存在")
@@ -370,7 +371,7 @@ class QzonePlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("写说说", alias={"写日记"})
     async def keep_diary(self, event: AiocqhttpMessageEvent, topic:str|None=None):
-        """根据聊天记录总结、发布说说"""
+        """写说说 <主题>"""
         diary_text = await self.llm.generate_diary(
             client=event.bot, group_id=event.get_group_id(), topic=topic
         )

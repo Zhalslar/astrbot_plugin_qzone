@@ -341,7 +341,7 @@ class Qzone:
         )
         return res
 
-    def _get_comments(self, msg: dict):
+    def _get_comments(self, msg: dict) -> list[dict]:
         comments = []
         for comment in msg.get("commentlist") or []:
             comment_time = comment.get("createTime", "") or comment.get(
@@ -377,7 +377,7 @@ class Qzone:
                     "parent_tid": None,
                 }
             )
-        return comments
+        return comments[::-1]
 
     async def get_qzones(
         self, target_id: str, pos: int = 1, num: int = 1

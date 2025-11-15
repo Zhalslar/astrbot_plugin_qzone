@@ -57,6 +57,8 @@ git clone https://github.com/Zhalslar/astrbot_plugin_qzone
 | 定时发说说（定时触发）   | 无             | 请在配置面板中设置触发时间     | 管理员    |
 | 定时评论好友说说（定时触发）   | 无             | 请在配置面板中设置触发时间    | 管理员    |
 
+- 特殊用法：@群友 也可直接 @QQ号 ，这样就可以查看任何人的说说了
+
 ### 效果图
 
 ![257528e19908e70160afde6f0dd6b9d2](https://github.com/user-attachments/assets/7aa706c2-6c50-4740-b57b-e61b7a232adf)

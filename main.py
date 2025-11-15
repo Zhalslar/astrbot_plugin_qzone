@@ -174,7 +174,7 @@ class QzonePlugin(Star):
             text=text,
             images=images,
         )
-        await self.pm.add(post)
+        post.id = await self.pm.add(post)
         img = await self.style.AioRender(
             text=post.to_str(), useImageUrl=True, autoPage=False
         )
@@ -193,10 +193,10 @@ class QzonePlugin(Star):
             anon=False,
             status="pending",
         )
-        post_id = await self.pm.add(post)
+        post.id = await self.pm.add(post)
 
         # 通知投稿者
-        yield event.plain_result(f"您的稿件#{post_id}已提交，请耐心等待审核")
+        yield event.plain_result(f"您的稿件#{post.id}已提交，请耐心等待审核")
 
         # 通知管理员
         img = await self.style.AioRender(
@@ -296,6 +296,10 @@ class QzonePlugin(Star):
         index = int(end_parm) if end_parm.isdigit() else 1
         posts: list[Post] = await self.qzone.get_qzones(target_id=target_id, pos=index)
         if posts:
+            # 顺便存到数据库
+            for p in posts:
+                p.id = await self.pm.add(p)
+            # 返回第一个
             return posts[0]
         else:
             await event.send(event.plain_result("没发现有说说"))
@@ -323,7 +327,7 @@ class QzonePlugin(Star):
             yield event.plain_result(f"点赞失败: {res.get('message')}")
             logger.error(f"点赞失败: {res}")
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    # @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("评论说说")
     async def comment(self, event: AiocqhttpMessageEvent):
         """评论说说 <@群友> <序号>"""
@@ -335,24 +339,27 @@ class QzonePlugin(Star):
             content=content,
         )
         # 评论成功
-        if res.get("code") == 0 and post.id:
+        if res.get("code") == 0:
             # 同步评论到数据库
             bot_id = event.get_self_id()
-            bot_name = get_nickname(event, bot_id)
-            comments = {
+            bot_name = await get_nickname(event, bot_id)
+            comment = {
                 "content": content,
                 "qq_account": bot_id,
                 "nickname": bot_name,
                 "comment_tid": post.tid,
                 "created_time": post.create_time,
             }
-            await self.pm.update(post.id, key="comments", value=comments)
+            # 更新数据
+            post.comments.append(comment)
+            await self.pm.update(post.id, key="comments", value=post.comments)
             # 展示
             img = await self.style.AioRender(
                 text=post.to_str(), useImageUrl=True, autoPage=False
             )
             img_path = img.Save(self.cache)
             yield event.image_result(str(img_path))
+
         # 评论失败
         else:
             yield event.plain_result(f"评论失败: {res.get('message')}")

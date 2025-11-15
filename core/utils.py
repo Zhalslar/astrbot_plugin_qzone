@@ -15,12 +15,16 @@ BytesOrStr = Union[str, bytes]  # noqa: UP007
 
 
 def get_ats(event: AiocqhttpMessageEvent) -> list[str]:
-    """获取被at者们的id列表"""
-    return [
+    """获取被at者们的id列表,(@增强版)"""
+    ats = [
         str(seg.qq)
         for seg in event.get_messages()[1:]
         if isinstance(seg, At)
     ]
+    for arg in event.message_str.split(" "):
+        if arg.startswith("@") and arg[1:].isdigit():
+            ats.append(arg[1:])
+    return ats
 
 async def get_nickname(event: AiocqhttpMessageEvent, user_id) -> str:
     """获取指定群友的群昵称或Q名"""

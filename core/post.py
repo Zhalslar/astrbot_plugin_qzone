@@ -79,7 +79,7 @@ class Post(pydantic.BaseModel):
     """视频列表"""
     anon: bool = False
     """是否匿名"""
-    status: str = "pending"
+    status: str = "approved"
     """状态"""
     create_time: int = pydantic.Field(
         default_factory=lambda: int(datetime.now().timestamp())

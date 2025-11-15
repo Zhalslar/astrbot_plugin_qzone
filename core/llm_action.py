@@ -27,6 +27,7 @@ class LLMAction:
             text_segments = [
                 seg["data"]["text"] for seg in msg["message"] if seg["type"] == "text"
             ]
+
             text = f"{msg['sender']['nickname']}: {''.join(text_segments).strip()}"
             # 仅当真正说了话才保留
             if text:
@@ -78,6 +79,8 @@ class LLMAction:
             if topic
             else self.config["diary_prompt"]
         )
+
+        logger.debug(f"{system_prompt}\n\n{contexts}")
 
         try:
             llm_response = await get_using.text_chat(

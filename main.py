@@ -376,7 +376,7 @@ class QzonePlugin(Star):
             client=event.bot, group_id=event.get_group_id(), topic=topic
         )
         images = await get_image_urls(event)
-        await self.qzone.publish_emotion(text=diary_text)
+        await self.qzone.publish_emotion(text=diary_text, images=images)
         post = Post(
             uin=int(event.get_self_id()),
             name="我",

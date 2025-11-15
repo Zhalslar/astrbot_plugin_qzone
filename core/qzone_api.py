@@ -6,9 +6,11 @@ import datetime
 import json
 import re
 import time
+from http.cookies import SimpleCookie
 from typing import Any
 
 import aiohttp
+from aiocqhttp import CQHttp
 
 from astrbot.api import logger
 
@@ -64,26 +66,38 @@ class Qzone:
         f"{BASE_URL}/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_re_feeds"
     )
 
-    def __init__(self, cookies: dict) -> None:
+    def __init__(self) -> None:
         self._session = aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(limit=100, ssl=False),
             timeout=aiohttp.ClientTimeout(total=10),
         )
-        self.cookies = cookies
-        self.skey = self.cookies.get("skey", "")
-        self.p_skey = self.cookies.get("p_skey", "")
-        self.uin = int(self.cookies.get("uin", "0")[1:])
-        self.gtk2 = generate_gtk(self.p_skey)
-        self.raw_cookies = {
-            "uin": f"o{self.uin}",
-            "skey": self.skey,
-            "p_skey": self.p_skey,
-        }
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
-            "referer": f"{self.BASE_URL}/{self.uin}",
-            "origin": f"{self.BASE_URL}",
-        }
+
+    async def login(self, client: CQHttp) -> bool:
+        """登录QQ空间"""
+        try:
+            cookie_str = (await client.get_cookies(domain="user.qzone.qq.com")).get(
+                "cookies", ""
+            )
+            self.cookies = {k: v.value for k, v in SimpleCookie(cookie_str).items()}
+            self.skey = self.cookies.get("skey", "")
+            self.p_skey = self.cookies.get("p_skey", "")
+            self.uin = int(self.cookies.get("uin", "0")[1:])
+            self.gtk2 = generate_gtk(self.p_skey)
+            self.raw_cookies = {
+                "uin": f"o{self.uin}",
+                "skey": self.skey,
+                "p_skey": self.p_skey,
+            }
+            self.headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+                "referer": f"{self.BASE_URL}/{self.uin}",
+                "origin": f"{self.BASE_URL}",
+            }
+            logger.info(f"Qzone 登录成功: {self.cookies}")
+            return True
+        except Exception as e:
+            logger.error(f"Qzone 登录失败: {e}")
+            return False
 
     async def _request(
         self,
@@ -327,7 +341,7 @@ class Qzone:
         )
         return res
 
-    def _get_comments(self, msg: dict):
+    def _get_comments(self, msg: dict) -> list[dict]:
         comments = []
         for comment in msg.get("commentlist") or []:
             comment_time = comment.get("createTime", "") or comment.get(
@@ -363,7 +377,7 @@ class Qzone:
                     "parent_tid": None,
                 }
             )
-        return comments
+        return comments[::-1]
 
     async def get_qzones(
         self, target_id: str, pos: int = 1, num: int = 1

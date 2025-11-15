@@ -1,6 +1,7 @@
 # pots.py
 
 import json
+import re
 import typing
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,37 @@ post_key = typing.Literal[
 ]
 
 
+def extract_and_replace_nickname(input_string):
+    # 匹配{}内的内容，包括非标准JSON格式
+    pattern = r"\{[^{}]*\}"
+
+    def replace_func(match):
+        content = match.group(0)
+        # 按照键值对分割
+        pairs = content[1:-1].split(",")
+        nick_value = ""
+        for pair in pairs:
+            key, value = pair.split(":", 1)
+            if key.strip() == "nick":
+                nick_value = value.strip()
+                break
+        # 如果找到nick值，则返回@nick_value，否则返回空字符串
+        return f"{nick_value} " if nick_value else ""
+
+    return re.sub(pattern, replace_func, input_string)
+
+
+def remove_em_tags(text):
+    """
+    移除字符串中的 [em]...[/em] 标记
+    :param text: 输入的字符串
+    :return: 移除标记后的字符串
+    """
+    # 使用正则表达式匹配 [em]...[/em] 并替换为空字符串
+    cleaned_text = re.sub(r"\[em\].*?\[/em\]", "", text)
+    return cleaned_text
+
+
 class Post(pydantic.BaseModel):
     """稿件"""
 
@@ -49,7 +81,9 @@ class Post(pydantic.BaseModel):
     """是否匿名"""
     status: str = "pending"
     """状态"""
-    create_time: int
+    create_time: int = pydantic.Field(
+        default_factory=lambda: int(datetime.now().timestamp())
+    )
     """创建时间"""
     rt_con: str = ""
     """转发内容"""
@@ -77,7 +111,9 @@ class Post(pydantic.BaseModel):
         if self.comments:
             lines.append("\n\n【评论区】\n")
             for comment in self.comments:
-                lines.append(f"- {comment['nickname']}: {comment['content']}")
+                lines.append(
+                    f"- {comment['nickname']}: {remove_em_tags(extract_and_replace_nickname(comment['content']))}"
+                )
         if is_pending:
             if self.anon:
                 lines.append(f"\n\n备注：稿件#{self.id}待审核, 投稿来自匿名者")
@@ -86,6 +122,14 @@ class Post(pydantic.BaseModel):
                     f"\n\n备注：稿件#{self.id}待审核, 投稿来自{self.name}({self.uin})"
                 )
         return "\n".join(lines)
+
+    def update(self, **kwargs):
+        """更新 Post 对象的属性"""
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+            else:
+                raise AttributeError(f"Post 对象没有属性 {key}")
 
 
 class PostManager:
@@ -203,12 +247,20 @@ class PostManager:
 
     async def update(
         self,
-        post_id: int,
+        post_id: int | None,
         key: post_key,
         value,
     ) -> int:
         if key not in self.ALLOWED_QUERY_KEYS:
             raise ValueError(f"不允许更新的字段: {key}")
+
+        # 如果值是 list 或 dict 类型，自动将其转换为 JSON 字符串
+        if isinstance(value, list | dict):
+            value = json.dumps(value, ensure_ascii=False)
+
+        if post_id is None:
+            raise ValueError("post_id未生成，请先用add方法将Post存入数据库")
+
         async with aiosqlite.connect(self.db_path) as db:
             cur = await db.execute(
                 f"UPDATE posts SET {key} = ? WHERE id = ?", (value, post_id)

@@ -20,13 +20,13 @@
         "description": "写日记的llm提示词",
         "type": "text",
         "hint": "建议自行根据Bot人格进行改写，从而达到更好的效果",
-        "default": "请从聊天记录中找出一个你感兴趣的主题来写日记，要求必须围绕此主题，如果是负面主题则吐槽，正面主题则感慨"
+        "default": "请从聊天记录中找出一个你感兴趣的主题来写日记，讲讲感慨、心得，语气比较哲学"
     },
     "diary_max_msg": {
         "description": "用于写日记的聊天记录的最大条数",
         "type": "int",
         "hint": "过长会爆上下文",
-        "default": 200
+        "default": 500
     },
     "publish_cron": {
         "description": "自动发说说时间间隔",

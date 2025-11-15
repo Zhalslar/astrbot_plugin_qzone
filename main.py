@@ -368,11 +368,11 @@ class QzonePlugin(Star):
             logger.error(f"评论失败: {res}")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("写日记")
-    async def keep_diary(self, event: AiocqhttpMessageEvent):
-        """根据聊天记录总结、发布日记"""
+    @filter.command("写说说", alias={"写日记"})
+    async def keep_diary(self, event: AiocqhttpMessageEvent, topic:str|None=None):
+        """根据聊天记录总结、发布说说"""
         diary_text = await self.llm.generate_diary(
-            client=event.bot, group_id=event.get_group_id()
+            client=event.bot, group_id=event.get_group_id(), topic=topic
         )
         images = await get_image_urls(event)
         await self.qzone.publish_emotion(text=diary_text)

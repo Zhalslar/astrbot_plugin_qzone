@@ -27,7 +27,7 @@ class LLMAction:
             text_segments = [
                 seg["data"]["text"] for seg in msg["message"] if seg["type"] == "text"
             ]
-            text = "".join(text_segments).strip()
+            text = f"{msg['sender']['nickname']}: {''.join(text_segments).strip()}"
             # 仅当真正说了话才保留
             if text:
                 contexts.append({"role": "user", "content": text})
@@ -55,7 +55,9 @@ class LLMAction:
             contexts.extend(self._build_context(round_messages))
         return contexts
 
-    async def generate_diary(self, client: CQHttp, group_id:str = "") -> str:
+    async def generate_diary(
+        self, client: CQHttp, group_id: str = "", topic: str | None = None
+    ) -> str:
         """根据聊天记录生成日记"""
         get_using = self.context.get_using_provider()
         if not get_using:
@@ -71,9 +73,15 @@ class LLMAction:
             contexts = await self._get_msg_contexts(random_group_id, client)
         # TODO: 更多模式
 
+        system_prompt = (
+            f"# 写作主题：{topic}\n\n" + self.config["diary_prompt"]
+            if topic
+            else self.config["diary_prompt"]
+        )
+
         try:
             llm_response = await get_using.text_chat(
-                system_prompt=self.config["diary_prompt"],
+                system_prompt=system_prompt,
                 contexts=contexts,
             )
             diary = llm_response.completion_text

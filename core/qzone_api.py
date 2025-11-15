@@ -71,9 +71,12 @@ class Qzone:
             connector=aiohttp.TCPConnector(limit=100, ssl=False),
             timeout=aiohttp.ClientTimeout(total=10),
         )
+        self.client: CQHttp = None # type: ignore
 
     async def login(self, client: CQHttp) -> bool:
         """登录QQ空间"""
+        # 挂载到类属性，方便cookies失效是重新登录
+        self.client = client
         try:
             cookie_str = (await client.get_cookies(domain="user.qzone.qq.com")).get(
                 "cookies", ""
@@ -119,8 +122,20 @@ class Qzone:
             cookies=self.raw_cookies,
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as resp:
-            if resp.status != 200:
-                raise RuntimeError("请求失败")
+            if resp.status not in [200, 401, 403]:
+                # 如果状态码不是200、401或403，直接抛出异常
+                raise RuntimeError(f"请求失败，状态码: {resp.status}")
+
+            if resp.status in [401, 403] and self.client:
+                # 如果状态码是401或403，尝试重新登录
+                logger.warning(f"请求失败，状态码: {resp.status}，尝试重新登录...")
+                if not await self.login(self.client):
+                    raise RuntimeError("重新登录失败，无法继续请求")
+                logger.info("重新登录成功，继续请求...")
+                # 重新发起请求
+                return await self._request(
+                    method, url, params=params, data=data, headers=headers, timeout=timeout
+                )
             text = await resp.text()
             if m := re.search(
                 r"callback\s*\(\s*([^{]*(\{.*\})[^)]*)\s*\)", text, re.I | re.S

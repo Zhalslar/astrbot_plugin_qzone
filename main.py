@@ -98,13 +98,15 @@ class QzonePlugin(Star):
         await self.qzone.login(client)
 
         # 初始化自动评论模块
-        self.auto_comment = AutoComment(
-            self.context, self.config, self.qzone, client, self.llm
-        )
+        if self.config.get("comment_cron"):
+            self.auto_comment = AutoComment(
+                self.context, self.config, self.qzone, client, self.llm
+            )
         # 初始化自动发说说模块
-        self.auto_pulish = AutoPublish(
-            self.context, self.config, self.qzone, client, self.llm
-        )
+        if self.config.get("comment_cron"):
+            self.auto_publish = AutoPublish(
+                self.context, self.config, self.qzone, client, self.llm
+            )
 
     async def notice_admin(
         self, event: AiocqhttpMessageEvent, chain: list[BaseMessageComponent]
@@ -390,6 +392,9 @@ class QzonePlugin(Star):
 
     async def terminate(self):
         """插件卸载时"""
-        await self.qzone.terminate()
-        await self.auto_comment.terminate()
-        await self.auto_pulish.terminate()
+        if hasattr(self, "qzone"):
+            await self.qzone.terminate()
+        if hasattr(self, "auto_comment"):
+            await self.auto_comment.terminate()
+        if hasattr(self, "auto_publish"):
+            await self.auto_publish.terminate()

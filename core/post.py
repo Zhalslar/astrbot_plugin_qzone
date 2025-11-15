@@ -49,7 +49,9 @@ class Post(pydantic.BaseModel):
     """是否匿名"""
     status: str = "pending"
     """状态"""
-    create_time: int
+    create_time: int = pydantic.Field(
+        default_factory=lambda: int(datetime.now().timestamp())
+    )
     """创建时间"""
     rt_con: str = ""
     """转发内容"""

@@ -6,6 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from astrbot.api import logger
+from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.star.context import Context
 
 from .llm_action import LLMAction
@@ -21,7 +22,7 @@ class AutoComment:
     def __init__(
         self,
         context: Context,
-        config,
+        config: AstrBotConfig,
         qzone: Qzone,
         client: CQHttp,
         llm: LLMAction,
@@ -39,7 +40,7 @@ class AutoComment:
 
         self.scheduler = AsyncIOScheduler(timezone=self.timezone)
         self.scheduler.start()
-        cron_cfg = config.get("pulish_cron", "0 8 * * 1")
+        cron_cfg = config.get("comment_cron", "0 8 * * 1")
         self.register_task(cron_cfg)
 
         logger.info(f"[AutoComment] 已启动，任务周期：{cron_cfg}")
@@ -54,7 +55,7 @@ class AutoComment:
             self.scheduler.add_job(
                 func=self.run_once,
                 trigger=trigger,
-                name="qzone_auto_like_comment",
+                name="qzone_auto_comment",
                 max_instances=1,
             )
         except Exception as e:

@@ -1,7 +1,6 @@
 # main.py
 
-import time
-from http.cookies import SimpleCookie
+import asyncio
 from pathlib import Path
 
 import pillowmd
@@ -25,10 +24,7 @@ from .core.auto_publish import AutoPublish
 from .core.llm_action import LLMAction
 from .core.post import Post, PostManager
 from .core.qzone_api import Qzone
-from .core.utils import (
-    get_ats,
-    get_image_urls,
-)
+from .core.utils import get_ats, get_image_urls, get_nickname
 
 
 @register("astrbot_plugin_qzone", "Zhalslar", "...", "...")
@@ -55,10 +51,11 @@ class QzonePlugin(Star):
         self.pm = PostManager(db_path)
         # llm内容生成器
         self.llm = LLMAction(context, config)
-        # QQ空间API
-        self.qzone: Qzone
+        # QQ空间模块
+        self.qzone = Qzone()
 
     async def initialize(self):
+        """加载、重载插件时触发"""
         # 初始化数据库
         await self.pm.init_db()
         # 实例化pillowmd样式
@@ -66,32 +63,48 @@ class QzonePlugin(Star):
             self.style = pillowmd.LoadMarkdownStyles(self.pillowmd_style_dir)
         except Exception as e:
             logger.error(f"无法加载pillowmd样式：{e}")
-        # 初始化AiocqhttpAdapter的Qzone（只取首个）
+
+        # 加载、重载插件时登录QQ空间
+        await self.initialize_qzone(False)
+
+    @filter.on_platform_loaded()
+    async def on_platform_loaded(self):
+        """平台加载完成时，登录QQ空间"""
+        await self.initialize_qzone(True)
+
+    async def initialize_qzone(self, wait_ws_connected: bool = False):
+        """初始化QQ空间、自动评论模块、自动发说说模块"""
+        client = None
         for inst in self.context.platform_manager.platform_insts:
             if isinstance(inst, AiocqhttpAdapter):
-                self.client = inst.get_client()
-                await self.initialize_qzone()
-                break
-        # 初始化自动评论器
-        if self.qzone and self.client and self.llm:
-            self.auto_comment = AutoComment(
-                self.context, self.config, self.qzone, self.client, self.llm
-            )
-            self.auto_pulish = AutoPublish(
-                self.context, self.config, self.qzone, self.client, self.llm
-            )
+                if client := inst.get_client():
+                    break
+        if not client:
+            return
+        # 等待 ws 连接完成
+        if wait_ws_connected:
+            ws_connected = asyncio.Event()
 
-    async def initialize_qzone(self):
-        """初始化Qzone"""
-        try:
-            cookie_str = (
-                await self.client.get_cookies(domain="user.qzone.qq.com")
-            ).get("cookies", "")
-            self.cookies = {k: v.value for k, v in SimpleCookie(cookie_str).items()}
-            self.qzone = Qzone(self.cookies)
-            logger.info(f"Qzone 初始化成功: {self.cookies}")
-        except Exception as e:
-            logger.error(f"Qzone 初始化失败: {e}")
+            @client.on_websocket_connection
+            def _(_):  # 连接成功时触发
+                ws_connected.set()
+
+            try:
+                await asyncio.wait_for(ws_connected.wait(), timeout=10)
+            except asyncio.TimeoutError:
+                logger.warning("等待 aiocqhttp WebSocket 连接超时")
+
+        # 登录QQ空间
+        await self.qzone.login(client)
+
+        # 初始化自动评论模块
+        self.auto_comment = AutoComment(
+            self.context, self.config, self.qzone, client, self.llm
+        )
+        # 初始化自动发说说模块
+        self.auto_pulish = AutoPublish(
+            self.context, self.config, self.qzone, client, self.llm
+        )
 
     async def notice_admin(
         self, event: AiocqhttpMessageEvent, chain: list[BaseMessageComponent]
@@ -154,8 +167,14 @@ class QzonePlugin(Star):
         text = event.message_str.removeprefix("发说说").removeprefix("发布说说").strip()
         images = await get_image_urls(event)
         await self.qzone.publish_emotion(text, images)
-        posts: list[Post] = await self.qzone.get_qzones(target_id=event.get_self_id())
-        post = posts[0]
+        post = Post(
+            uin=int(event.get_self_id()),
+            name="我",
+            gin=int(event.get_group_id() or 0),
+            text=text,
+            images=images,
+        )
+        await self.pm.add(post)
         img = await self.style.AioRender(
             text=post.to_str(), useImageUrl=True, autoPage=False
         )
@@ -173,7 +192,6 @@ class QzonePlugin(Star):
             images=await get_image_urls(event),
             anon=False,
             status="pending",
-            create_time=int(time.time()),
         )
         post_id = await self.pm.add(post)
 
@@ -302,7 +320,7 @@ class QzonePlugin(Star):
         if res.get("code") == 0:
             yield event.plain_result(f"已给{post.name}的说说点赞: {post.text[:10]}")
         else:
-            yield event.plain_result(f"点赞说说失败: {res}")
+            yield event.plain_result(f"点赞失败: {res.get('message')}")
             logger.error(f"点赞失败: {res}")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -316,12 +334,28 @@ class QzonePlugin(Star):
             target_id=str(post.uin),
             content=content,
         )
-        if res.get("code") == 0:
-            yield event.plain_result(
-                f"已评论{post.name}的说说({post.text[:6]}...): {content}"
+        # 评论成功
+        if res.get("code") == 0 and post.id:
+            # 同步评论到数据库
+            bot_id = event.get_self_id()
+            bot_name = get_nickname(event, bot_id)
+            comments = {
+                "content": content,
+                "qq_account": bot_id,
+                "nickname": bot_name,
+                "comment_tid": post.tid,
+                "created_time": post.create_time,
+            }
+            await self.pm.update(post.id, key="comments", value=comments)
+            # 展示
+            img = await self.style.AioRender(
+                text=post.to_str(), useImageUrl=True, autoPage=False
             )
+            img_path = img.Save(self.cache)
+            yield event.image_result(str(img_path))
+        # 评论失败
         else:
-            yield event.plain_result(f"评论失败: {res}")
+            yield event.plain_result(f"评论失败: {res.get('message')}")
             logger.error(f"评论失败: {res}")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -329,11 +363,18 @@ class QzonePlugin(Star):
     async def keep_diary(self, event: AiocqhttpMessageEvent):
         """根据聊天记录总结、发布日记"""
         diary_text = await self.llm.generate_diary(
-            client=self.client, group_id=event.get_group_id()
+            client=event.bot, group_id=event.get_group_id()
         )
+        images = await get_image_urls(event)
         await self.qzone.publish_emotion(text=diary_text)
-        posts: list[Post] = await self.qzone.get_qzones(target_id=event.get_self_id())
-        post = posts[0]
+        post = Post(
+            uin=int(event.get_self_id()),
+            name="我",
+            gin=int(event.get_group_id() or 0),
+            text=diary_text,
+            images=images,
+        )
+        await self.pm.add(post)
         img = await self.style.AioRender(
             text=post.to_str(), useImageUrl=True, autoPage=False
         )
@@ -341,7 +382,7 @@ class QzonePlugin(Star):
         yield event.image_result(str(img_path))
 
     async def terminate(self):
-        """插件卸载时关闭Qzone API网络连接"""
+        """插件卸载时"""
         await self.qzone.terminate()
         await self.auto_comment.terminate()
         await self.auto_pulish.terminate()

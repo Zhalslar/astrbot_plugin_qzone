@@ -1,6 +1,5 @@
 # qzone_api.py
 
-import asyncio
 import base64
 import datetime
 import json
@@ -10,6 +9,8 @@ from http.cookies import SimpleCookie
 from typing import Any
 
 import aiohttp
+import bs4
+import json5
 from aiocqhttp import CQHttp
 
 from astrbot.api import logger
@@ -54,33 +55,26 @@ class Qzone:
     BASE_URL = "https://user.qzone.qq.com"
     H5_BASE_URL = "https://h5.qzone.qq.com"
     UPLOAD_IMAGE_URL = "https://up.qzone.qq.com/cgi-bin/upload/cgi_upload_image"
-    EMOTION_URL = (
-        f"{BASE_URL}/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6"
-    )
-    VISITOR_URL = f"{H5_BASE_URL}/proxy/domain/g.qzone.qq.com/cgi-bin/friendshow/cgi_get_visitor_more"
-    DOLIKE_URL = (
-        f"{H5_BASE_URL}/proxy/domain/w.qzone.qq.com/cgi-bin/likes/internal_dolike_app"
-    )
-    LIST_URL = f"{BASE_URL}/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_msglist_v6"
-    COMMENT_URL = (
-        f"{BASE_URL}/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_re_feeds"
-    )
+    EMOTION_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6"
+    VISITOR_URL = "https://h5.qzone.qq.com/proxy/domain/g.qzone.qq.com/cgi-bin/friendshow/cgi_get_visitor_more"
+    DOLIKE_URL = "https://h5.qzone.qq.com/proxy/domain/w.qzone.qq.com/cgi-bin/likes/internal_dolike_app"
+    LIST_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_msglist_v6"
+    COMMENT_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_re_feeds"
+    ZONE_LIST_URL = "https://user.qzone.qq.com/proxy/domain/ic2.qzone.qq.com/cgi-bin/feeds/feeds3_html_more"
 
-    def __init__(self) -> None:
+    def __init__(self, client: CQHttp) -> None:
         self._session = aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(limit=100, ssl=False),
             timeout=aiohttp.ClientTimeout(total=10),
         )
-        self.client: CQHttp = None # type: ignore
-
-    async def login(self, client: CQHttp) -> bool:
-        """登录QQ空间"""
-        # 挂载到类属性，方便cookies失效是重新登录
         self.client = client
+
+    async def login(self) -> bool:
+        """登录QQ空间"""
         try:
-            cookie_str = (await client.get_cookies(domain="user.qzone.qq.com")).get(
-                "cookies", ""
-            )
+            cookie_str = (
+                await self.client.get_cookies(domain="user.qzone.qq.com")
+            ).get("cookies", "")
             self.cookies = {k: v.value for k, v in SimpleCookie(cookie_str).items()}
             self.skey = self.cookies.get("skey", "")
             self.p_skey = self.cookies.get("p_skey", "")
@@ -111,8 +105,15 @@ class Qzone:
         data: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         timeout: int = 10,
-    ) -> dict[str, Any]:
+        retry_count: int = 0,
+    ) -> dict:
         """aiohttp 包装"""
+        if retry_count > 3:  # 限制递归深度
+            raise RuntimeError("请求失败，重试次数过多")
+
+        if method.upper() not in ["GET", "POST", "PUT", "DELETE"]:
+            raise ValueError(f"无效的请求方法: {method}")
+
         async with self._session.request(
             method.upper(),
             url,
@@ -123,76 +124,82 @@ class Qzone:
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as resp:
             if resp.status not in [200, 401, 403]:
-                # 如果状态码不是200、401或403，直接抛出异常
                 raise RuntimeError(f"请求失败，状态码: {resp.status}")
 
             if resp.status in [401, 403] and self.client:
-                # 如果状态码是401或403，尝试重新登录
-                logger.warning(f"请求失败，状态码: {resp.status}，尝试重新登录...")
-                if not await self.login(self.client):
+                logger.warning(
+                    f"请求失败，状态码: {resp.status}，正在尝试重新登录QQ空间..."
+                )
+                if not await self.login():
                     raise RuntimeError("重新登录失败，无法继续请求")
                 logger.info("重新登录成功，继续请求...")
-                # 重新发起请求
                 return await self._request(
-                    method, url, params=params, data=data, headers=headers, timeout=timeout
+                    method,
+                    url,
+                    params=params,
+                    data=data,
+                    headers=headers or self.headers,
+                    timeout=timeout,
+                    retry_count=retry_count + 1,
                 )
-            text = await resp.text()
+
+            resp_text = await resp.text()
+            json_str = ""
             if m := re.search(
-                r"callback\s*\(\s*([^{]*(\{.*\})[^)]*)\s*\)", text, re.I | re.S
+                r"callback\s*\(\s*([^{]*(\{.*\})[^)]*)\s*\)", resp_text, re.I | re.S
             ):
                 json_str = m.group(2)
             else:
-                json_str = text[text.find("{") : text.rfind("}") + 1]
-            return json.loads(json_str.strip() or text)
+                json_str = resp_text[resp_text.find("{") : resp_text.rfind("}") + 1]
 
-    async def token_valid(self, max_retry: int = 3, backoff: float = 1.0) -> bool:
-        """验证当前登录态是否可用"""
-        for attempt in range(max_retry):
             try:
-                await self.get_visitor()
-                return True
-            except asyncio.CancelledError:
+                parse_data = json.loads(json_str.strip() or resp_text)
+                logger.debug(f"初解析原始说说数据: {parse_data}")
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON 解析错误: {e}")
                 raise
-            except Exception as exc:
-                logger.warning(f"Token 校验失败(第 {attempt + 1} 次): {exc!r}")
-                if attempt < max_retry - 1:
-                    await asyncio.sleep(backoff * (2**attempt))
-        return False
+            # 重登机制
+            if parse_data.get("code") == -3000:
+                logger.warning("请求失败，状态码: -3000，正在尝试重新登录QQ空间...")
+                if not await self.login():
+                    raise RuntimeError("重新登录失败，无法继续请求")
+                logger.info("重新登录成功，继续请求...")
+            return parse_data
+
 
     async def _upload_image(self, image: bytes) -> dict[str, Any]:
         """上传单张图片"""
-        data = {
-            "filename": "filename",
-            "uploadtype": "1",
-            "albumtype": "7",
-            "skey": self.skey,
-            "uin": self.uin,
-            "p_skey": self.p_skey,
-            "output_type": "json",
-            "base64": "1",
-            "picfile": base64.b64encode(image).decode(),
-        }
-        headers = {
-            "referer": f"{self.BASE_URL}/{self.uin}",
-            "origin": self.BASE_URL,
-        }
-        res = await self._request(
-            "POST", url=self.UPLOAD_IMAGE_URL, data=data, headers=headers, timeout=60
+        return await self._request(
+            method="POST",
+            url=self.UPLOAD_IMAGE_URL,
+            timeout=60,
+            data={
+                "filename": "filename",
+                "uploadtype": "1",
+                "albumtype": "7",
+                "skey": self.skey,
+                "uin": self.uin,
+                "p_skey": self.p_skey,
+                "output_type": "json",
+                "base64": "1",
+                "picfile": base64.b64encode(image).decode(),
+            }
         )
-        return res
 
     async def get_visitor(self) -> dict:
         """获取今日/总访客数"""
-        params = {
-            "uin": self.uin,
-            "mask": 7,
-            "g_tk": self.gtk2,
-            "page": 1,
-            "fupdate": 1,
-            "clear": 1,
-        }
-        res = await self._request("GET", url=self.VISITOR_URL, params=params)
-        return res
+        return await self._request(
+            method="GET",
+            url=self.VISITOR_URL,
+            params={
+                "uin": self.uin,
+                "mask": 7,
+                "g_tk": self.gtk2,
+                "page": 1,
+                "fupdate": 1,
+                "clear": 1,
+            }
+        )
 
     def parse_qzone_visitors(self, data: dict) -> str:
         """
@@ -215,7 +222,7 @@ class Qzone:
         for idx, v in enumerate(items, 1):
             # 基本信息
             name = v.get("name", "匿名")
-            qq = v.get("uin", "0")
+            # qq = v.get("uin", "0")
             ts = v.get("time", 0)
             dt = datetime.datetime.fromtimestamp(ts).strftime("%m-%d %H:%M")
 
@@ -298,29 +305,27 @@ class Qzone:
             target_id (str): 目标QQ号。
 
         """
-        post_data = {
-            "qzreferrer": f"{self.BASE_URL}/{self.uin}",  # 来源
-            "opuin": self.uin,  # 操作者QQ
-            "unikey": f"{self.BASE_URL}/{target_id}/mood/{fid}",  # 动态唯一标识
-            "curkey": f"{self.BASE_URL}/{target_id}/mood/{fid}",  # 要操作的动态对象
-            "appid": 311,  # 应用ID(说说:311)
-            "from": 1,  # 来源
-            "typeid": 0,  # 类型ID
-            "abstime": int(time.time()),  # 当前时间戳
-            "fid": fid,  # 动态ID
-            "active": 0,  # 活动ID
-            "format": "json",  # 返回格式
-            "fupdate": 1,  # 更新标记
-        }
-        res = await self._request(
+        return await self._request(
             method="POST",
             url=self.DOLIKE_URL,
             params={
                 "g_tk": self.gtk2,
             },
-            data=post_data,
+            data={
+                "qzreferrer": f"{self.BASE_URL}/{self.uin}",  # 来源
+                "opuin": self.uin,  # 操作者QQ
+                "unikey": f"{self.BASE_URL}/{target_id}/mood/{fid}",  # 动态唯一标识
+                "curkey": f"{self.BASE_URL}/{target_id}/mood/{fid}",  # 要操作的动态对象
+                "appid": 311,  # 应用ID(说说:311)
+                "from": 1,  # 来源
+                "typeid": 0,  # 类型ID
+                "abstime": int(time.time()),  # 当前时间戳
+                "fid": fid,  # 动态ID
+                "active": 0,  # 活动ID
+                "format": "json",  # 返回格式
+                "fupdate": 1,  # 更新标记
+            }
         )
-        return res
 
     async def comment(self, fid: str, target_id: str, content: str):
         """
@@ -332,29 +337,25 @@ class Qzone:
             content (str): 评论的文本内容。
 
         """
-        post_data = {
-            "topicId": f"{target_id}_{fid}__1",  # 说说ID
-            "uin": self.uin,  # botQQ
-            "hostUin": target_id,  # 目标QQ
-            "feedsType": 100,  # 说说类型
-            "inCharset": "utf-8",  # 字符集
-            "outCharset": "utf-8",  # 字符集
-            "plat": "qzone",  # 平台
-            "source": "ic",  # 来源
-            "platformid": 52,  # 平台id
-            "format": "fs",  # 返回格式
-            "ref": "feeds",  # 引用
-            "content": content,  # 评论内容
-        }
-        res = await self._request(
-            method="POST",
+        return await self._request(
+            "POST",
             url=self.COMMENT_URL,
-            params={
-                "g_tk": self.gtk2,
-            },
-            data=post_data,
+            params={"g_tk": self.gtk2},
+            data={
+                "topicId": f"{target_id}_{fid}__1",  # 说说ID
+                "uin": self.uin,  # botQQ
+                "hostUin": target_id,  # 目标QQ
+                "feedsType": 100,  # 说说类型
+                "inCharset": "utf-8",  # 字符集
+                "outCharset": "utf-8",  # 字符集
+                "plat": "qzone",  # 平台
+                "source": "ic",  # 来源
+                "platformid": 52,  # 平台id
+                "format": "fs",  # 返回格式
+                "ref": "feeds",  # 引用
+                "content": content,  # 评论内容
+            }
         )
-        return res
 
     def _get_comments(self, msg: dict) -> list[dict]:
         comments = []
@@ -402,13 +403,11 @@ class Qzone:
 
         Args:
             target_id (str): 目标QQ号。
+            pos (int): 起始位置。
             num (int): 要获取的说说数量。
-
-        Returns:
-            list[dict[str, Any]]: 包含说说信息的字典列表，每条字典包含说说的ID（tid）、发布时间（created_time）、内容（content）、图片描述（images）、视频url（videos）及转发内容（rt_con）。
         """
         logger.info(f"正在获取 {target_id} 的说说列表...")
-        data = await self._request(
+        res = await self._request(
             method="GET",
             url=self.LIST_URL,
             params={
@@ -425,17 +424,14 @@ class Qzone:
                 "need_comment": 1,
                 "need_private_comment": 1,
             },
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/91.0.4472.124 Safari/537.36",
-                "Referer": f"https://user.qzone.qq.com/{target_id}",
-                "Host": "user.qzone.qq.com",
-                "Connection": "keep-alive",
-            },
         )
-        if data.get("code") != 0:
-            raise Exception(f"说说获取失败: {data}")
+        if res.get("code") != 0:
+            raise Exception(f"说说获取失败: {res}")
 
+        return self.parse_qzone_list(res)
+
+    def parse_qzone_list(self, data: dict):
+        """解析说说列表"""
         posts = []
         msglist = data.get("msglist") or []
         for msg in msglist:
@@ -480,6 +476,187 @@ class Qzone:
             posts.append(post)
 
         return posts
+
+
+    # async def monitor_get_qzones(self, self_readnum: int) -> list[dict[str, Any]]:
+    #     """
+    #     获取自己的好友说说列表，返回已读与未读的说说列表。
+    #     Args:
+    #         self_readnum: 需要获取完整评论的自己的最新说说数量
+
+    #     """
+    #     res = await self._request(
+    #         method="GET",
+    #         url=self.ZONE_LIST_URL,
+    #         params={
+    #             "uin": self.uin,  # QQ号
+    #             "scope": 0,  # 访问范围
+    #             "view": 1,  # 查看权限
+    #             "filter": "all",  # 全部动态
+    #             "flag": 1,  # 标记
+    #             "applist": "all",  # 所有应用
+    #             "pagenum": 1,  # 页码
+    #             "aisortEndTime": 0,  # AI排序结束时间
+    #             "aisortOffset": 0,  # AI排序偏移
+    #             "aisortBeginTime": 0,  # AI排序开始时间
+    #             "begintime": 0,  # 开始时间
+    #             "format": "json",  # 返回格式
+    #             "g_tk": self.gtk2,  # 令牌
+    #             "useutf8": 1,  # 使用UTF8编码
+    #             "outputhtmlfeed": 1,  # 输出HTML格式
+    #         }
+    #     )
+
+    #     if res.get("code") != 0:
+    #         raise Exception(f"说说获取失败: {res}")
+
+    #     #return self.parse_qzone_list(res)
+    #     print(res)
+    #     try:
+    #         feeds_list = []
+    #         num_self = 0  # 记录自己的说说数量
+    #         for feed in res:
+    #             if not feed:  # 跳过None值
+    #                 continue
+    #             # 过滤广告类内容（appid=311）
+    #             appid = str(feed.get("appid", ""))
+    #             if appid != "311":
+    #                 continue
+    #             target_qq = feed.get("uin", "")
+    #             if target_qq == str(self.uin):
+    #                 num_self += 1  # 统计自己的说说数量
+    #             tid = feed.get("key", "")
+    #             if not target_qq or not tid:
+    #                 logger.error(f"无效的说说数据: target_qq={target_qq}, tid={tid}")
+    #                 continue
+    #             # print(feed)
+
+    #             html_content = feed.get("html", "")
+    #             if not html_content:
+    #                 logger.error(f"说说内容为空: UIN={target_qq}, TID={tid}")
+    #                 continue
+
+    #             soup = bs4.BeautifulSoup(html_content, "html.parser")
+
+    #             # 解析说说时间 - 相对时间，如'昨天17:50'
+    #             created_time = feed.get("feedstime", "").strip()
+
+    #             # 提取文字内容
+    #             text_div = soup.find("div", class_="f-info")
+    #             text = text_div.get_text(strip=True) if text_div else ""
+    #             # 提取转发内容
+    #             rt_con = ""
+    #             txt_box = soup.select_one("div.txt-box")
+    #             if txt_box:
+    #                 # 获取除昵称外的纯文本内容
+    #                 rt_con = txt_box.get_text(strip=True)
+    #                 # 分割掉昵称部分（从第一个冒号开始取内容）
+    #                 if "：" in rt_con:
+    #                     rt_con = rt_con.split("：", 1)[1].strip()
+    #             # 提取图片URL
+    #             image_urls = []
+    #             # 查找所有图片容器
+    #             img_box = soup.find("div", class_="img-box")
+    #             if img_box:
+    #                 for img in img_box.find_all("img"):
+    #                     src = img.get("src")
+    #                     if src and not src.startswith(
+    #                         "http://qzonestyle.gtimg.cn"
+    #                     ):  # 过滤表情图标
+    #                         image_urls.append(src)
+    #             # TODO 临时视频处理办法（视频缩略图）
+    #             images = []
+    #             img_tag = soup.select_one("div.video-img img")
+    #             if img_tag and "src" in img_tag.attrs:
+    #                 if img_tag["src"] not in images:
+    #                     images.append(img_tag["src"])
+
+    #             # 获取视频url
+    #             videos = []
+    #             video_div = soup.select_one("div.img-box.f-video-wrap.play")
+    #             if video_div and "url3" in video_div.attrs:
+    #                 videos.append(video_div["url3"])
+    #             # 获取评论内容
+    #             comments_list = []
+    #             # 查找所有评论项（包括主评论和回复）
+    #             comment_items = soup.select("li.comments-item.bor3")
+    #             if comment_items:
+    #                 for item in comment_items:
+    #                     # 提取基本信息
+    #                     qq_account = item.get("data-uin", "")
+    #                     comment_tid = item.get("data-tid", "")
+    #                     nickname = item.get("data-nick", "")
+
+    #                     # 查找评论内容
+    #                     content_div = item.select_one("div.comments-content")
+    #                     if content_div:
+    #                         # 移除操作按钮（回复/删除）
+    #                         for op in content_div.select("div.comments-op"):
+    #                             op.decompose()
+    #                         # 获取纯文本内容
+    #                         content = content_div.get_text(" ", strip=True)
+    #                     else:
+    #                         content = ""
+
+    #                     # 提取评论时间（直接使用相对时间字符串）
+    #                     comment_time_span = item.select_one("span.state")
+    #                     comment_time = (
+    #                         comment_time_span.get_text(strip=True)
+    #                         if comment_time_span
+    #                         else ""
+    #                     )
+
+    #                     # 检查是否是回复
+    #                     parent_tid = None
+    #                     parent_div = item.find_parent("div", class_="mod-comments-sub")
+    #                     if parent_div:
+    #                         parent_li = parent_div.find_parent(
+    #                             "li", class_="comments-item"
+    #                         )
+    #                         if parent_li:
+    #                             parent_tid = parent_li.get("data-tid")
+
+    #                     comments_list.append(
+    #                         {
+    #                             "qq_account": str(qq_account),
+    #                             "nickname": nickname,
+    #                             "comment_tid": int(comment_tid)
+    #                             if comment_tid.isdigit()
+    #                             else 0,
+    #                             "content": content,
+    #                             "created_time": comment_time,  # 直接使用相对时间字符串
+    #                             "parent_tid": int(parent_tid)
+    #                             if parent_tid and parent_tid.isdigit()
+    #                             else None,
+    #                         }
+    #                     )
+
+    #             feeds_list.append(
+    #                 {
+    #                     "target_qq": str(target_qq),
+    #                     "tid": str(tid),
+    #                     "created_time": created_time,  # 相对时间字符串
+    #                     "content": text,
+    #                     "images": images,
+    #                     "videos": videos,
+    #                     "rt_con": rt_con,
+    #                     "comments": comments_list,
+    #                 }
+    #             )
+
+    #         logger.info(
+    #             f"成功解析 {len(feeds_list)} 条最新说说，其中自己的说说有 {num_self} 条"
+    #         )
+    #         # 获取自己说说下的完整评论内容
+    #         feeds_list = [
+    #             item for item in feeds_list if item.get("target_qq") != str(self.uin)
+    #         ]  # 去除自己的说说
+    #         self_feeds = await self.get_qzones(str(self.uin), self_readnum)
+    #         feeds_list.extend(self_feeds)
+    #         return feeds_list
+    #     except Exception as e:
+    #         logger.error(f"解析说说错误：{e}")
+    #         return []
 
     async def terminate(self) -> None:
         await self._session.close()

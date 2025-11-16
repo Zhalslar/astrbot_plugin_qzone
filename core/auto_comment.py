@@ -1,7 +1,6 @@
 import asyncio
 import zoneinfo
 
-from aiocqhttp import CQHttp
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -24,11 +23,10 @@ class AutoComment:
         context: Context,
         config: AstrBotConfig,
         qzone: Qzone,
-        client: CQHttp,
         llm: LLMAction,
     ):
         self.qzone = qzone
-        self.client = client
+        self.friend_ids = []
         self.llm = llm
 
         self.per_qzone_num = config.get("per_qzone_num", 5)
@@ -62,27 +60,15 @@ class AutoComment:
             logger.error(f"[AutoComment] Cron 格式错误：{e}")
 
 
-    async def get_friend_ids(self) -> list[int]:
-        """
-        通过 aiocqhttp 获取好友 QQ 号列表
-        """
-        try:
-            res = await self.client.get_friend_list()
-            return [f["user_id"] for f in res]
-        except Exception as e:
-            logger.error(f"[AutoComment] 获取好友失败：{e}")
-            return []
-
     async def run_once(self):
         """执行一次完整的遍历 + 点赞 + 评论"""
         logger.info("[AutoComment] 开始自动遍历好友说说...")
 
-        friend_ids = await self.get_friend_ids()
-        if not friend_ids:
+        if not self.friend_ids:
             logger.warning("[AutoComment] 无好友，跳过")
             return
 
-        for uin in friend_ids:
+        for uin in self.friend_ids:
             try:
                 await self.process_friend(uin)
             except Exception as e:
@@ -120,10 +106,6 @@ class AutoComment:
 
 
     async def comment_post(self, post: Post):
-        if not self.llm:
-            logger.warning("[AutoComment] 未提供 llm，跳过评论")
-            return
-
         try:
             content = await self.llm.generate_comment(post)
 

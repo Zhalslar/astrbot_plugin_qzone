@@ -1,0 +1,194 @@
+
+from astrbot.api import logger
+from astrbot.core.config.astrbot_config import AstrBotConfig
+from astrbot.core.message.components import BaseMessageComponent, Image, Plain
+from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
+    AiocqhttpMessageEvent,
+)
+from astrbot.core.star.context import Context
+
+from .llm_action import LLMAction
+from .post import Post, PostManager
+from .qzone_api import Qzone
+from .utils import get_image_urls
+
+
+class CampusWall:
+    def __init__(
+        self,
+        context: Context,
+        config: AstrBotConfig,
+        qzone: Qzone,
+        llm: LLMAction,
+        post_manager: PostManager,
+        cache,
+        style
+    ):
+        self.qzone = qzone
+        self.llm = llm
+        self.pm = post_manager
+        self.style =style
+        self.cache = cache
+        # 管理群ID，审批信息会发到此群
+        self.manage_group: int = config.get("manage_group", 0)
+        # 管理员QQ号列表，审批信息会私发给这些人
+        self.admins_id: list[str] = list(set(context.get_config().get("admins_id", [])))
+
+    async def notice_admin(
+        self, event: AiocqhttpMessageEvent, chain: list[BaseMessageComponent]
+    ):
+        """通知管理群或管理员"""
+        client = event.bot
+        obmsg = await event._parse_onebot_json(MessageChain(chain))
+
+        async def send_to_admins():
+            for admin_id in self.admins_id:
+                if admin_id.isdigit():
+                    try:
+                        await client.send_private_msg(
+                            user_id=int(admin_id), message=obmsg
+                        )
+                    except Exception as e:
+                        logger.error(f"无法反馈管理员：{e}")
+
+        if self.manage_group:
+            try:
+                await client.send_group_msg(
+                    group_id=int(self.manage_group), message=obmsg
+                )
+            except Exception as e:
+                logger.error(f"无法反馈管理群：{e}")
+                await send_to_admins()
+        elif self.admins_id:
+            await send_to_admins()
+
+    async def notice_user(
+        self,
+        event: AiocqhttpMessageEvent,
+        chain: list[BaseMessageComponent],
+        group_id: int = 0,
+        user_id: int = 0,
+    ):
+        """通知投稿者"""
+        client = event.bot
+        obmsg = await event._parse_onebot_json(MessageChain(chain))
+
+        async def send_to_user():
+            try:
+                await client.send_private_msg(user_id=int(user_id), message=obmsg)
+            except Exception as e:
+                logger.error(f"无法通知投稿者：{e}")
+
+        if group_id:
+            try:
+                await client.send_group_msg(group_id=int(group_id), message=obmsg)
+            except Exception as e:
+                logger.error(f"无法投稿者的群：{e}")
+                await send_to_user()
+        elif self.admins_id:
+            await send_to_user()
+
+
+    async def contribute(self, event: AiocqhttpMessageEvent):
+        """投稿 <文字+图片>"""
+        post = Post(
+            uin=int(event.get_sender_id()),
+            name=event.get_sender_name(),
+            gin=int(event.get_group_id() or 0),
+            text=event.message_str.removeprefix("投稿").strip(),
+            images=await get_image_urls(event),
+            anon=False,
+            status="pending",
+        )
+        post.id = await self.pm.add(post)
+        # 渲染图片
+        img = await self.style.AioRender(
+            text=post.to_str(), useImageUrl=True, autoPage=False
+        )
+        img_path = img.Save(self.cache)
+        img_seg = Image.fromFileSystem(str(img_path))
+
+        # 通知投稿者
+        chain = [Plain("已投，等待审核..."), img_seg]
+        await event.send(event.chain_result(chain))
+
+        # 通知管理员
+        chain = [Plain(f"收到新投稿#{post.id}"), img_seg]
+        await self.notice_admin(event, chain)
+        event.stop_event()
+
+
+    async def view(self, event: AiocqhttpMessageEvent, post_id: int = -1):
+        "查看稿件 <ID>, 默认最新稿件"
+        post = await self.pm.get(key="id", value=post_id)
+        if not post:
+            await event.send(event.plain_result(f"稿件#{post_id}不存在"))
+            return
+        img = await self.style.AioRender(
+            text=post.to_str(), useImageUrl=True, autoPage=False
+        )
+        img_path = img.Save(self.cache)
+        await event.send(event.image_result(str(img_path)))
+
+
+    async def approve(self, event: AiocqhttpMessageEvent, post_id: int):
+        """通过投稿 <稿件ID>"""
+        # 更新稿件状态
+        await self.pm.update(post_id, key="status", value="approved")
+        post = await self.pm.get(key="id", value=post_id)
+        if not post:
+            return
+
+        # 发布说说
+        tid = await self.qzone.publish_emotion(text=post.text, images=post.images)
+        await self.pm.update(post_id, key="tid", value=tid)
+
+        # 渲染图片
+        img = await self.style.AioRender(
+            text=post.to_str(), useImageUrl=True, autoPage=False
+        )
+        img_path = img.Save(self.cache)
+        img_seg = Image.fromFileSystem(str(img_path))
+
+        # 通知管理员
+        chain = [Plain(f"已发布说说#{post_id}"), img_seg]
+        await event.send(event.chain_result(chain))
+
+        # 通知投稿者
+        chain = [Plain(f"您的投稿#{post_id}已通过"), img_seg]
+        await self.notice_user(
+            event,
+            chain=chain,
+            group_id=post.gin,
+            user_id=post.uin,
+        )
+        logger.info(f"已发布说说#{post_id}, 说说tid: {tid}")
+
+
+    async def reject(self, event: AiocqhttpMessageEvent, post_id: int):
+        """拒绝投稿 <稿件ID> <原因>"""
+        # 更新稿件状态
+        await self.pm.update(post_id, key="status", value="rejected")
+        post = await self.pm.get(key="id", value=post_id)
+        if not post:
+            return
+
+        reason = event.message_str.removeprefix("不通过").strip()
+        # 通知管理员
+        admin_msg = f"已拒绝稿件#{post_id}"
+        if reason:
+            admin_msg += f"\n理由：{reason}"
+        await event.send(event.plain_result(admin_msg))
+
+        # 通知投稿者
+        user_msg = f"您的投稿#{post_id}未通过"
+        if reason:
+            user_msg += f"\n理由：{reason}"
+        await self.notice_user(
+            event,
+            chain=[Plain(user_msg)],
+            group_id=post.gin,
+            user_id=post.uin,
+        )
+

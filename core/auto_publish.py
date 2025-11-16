@@ -1,6 +1,5 @@
 import zoneinfo
 
-from aiocqhttp import CQHttp
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -22,11 +21,9 @@ class AutoPublish:
         context: Context,
         config: AstrBotConfig,
         qzone: Qzone,
-        client: CQHttp,
         llm: LLMAction,
     ):
         self.qzone = qzone
-        self.client = client
         self.llm = llm
 
         self.per_qzone_num = config.get("per_qzone_num", 5)
@@ -65,7 +62,7 @@ class AutoPublish:
         """
         logger.info("[AutoPublish] 执行自动发说说任务")
 
-        diary_text = await self.llm.generate_diary(client=self.client)
+        diary_text = await self.llm.generate_diary()
         await self.qzone.publish_emotion(text=diary_text)
 
     async def terminate(self):

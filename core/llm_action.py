@@ -11,9 +11,10 @@ from .post import Post
 
 
 class LLMAction:
-    def __init__(self, context: Context, config: AstrBotConfig):
+    def __init__(self, context: Context, config: AstrBotConfig, client: CQHttp):
         self.context = context
         self.config = config
+        self.client = client
 
     def _build_context(
         self, round_messages: list[dict[str, Any]]
@@ -34,7 +35,7 @@ class LLMAction:
                 contexts.append({"role": "user", "content": text})
         return contexts
 
-    async def _get_msg_contexts(self, group_id: str, client: CQHttp) -> list[dict]:
+    async def _get_msg_contexts(self, group_id: str) -> list[dict]:
         """获取群聊历史消息"""
         message_seq = 0
         contexts: list[dict] = []
@@ -45,7 +46,7 @@ class LLMAction:
                 "count": 200,
                 "reverseOrder": True,
             }
-            result: dict = await client.api.call_action(
+            result: dict = await self.client.api.call_action(
                 "get_group_msg_history", **payloads
             )
             round_messages = result["messages"]
@@ -56,9 +57,7 @@ class LLMAction:
             contexts.extend(self._build_context(round_messages))
         return contexts
 
-    async def generate_diary(
-        self, client: CQHttp, group_id: str = "", topic: str | None = None
-    ) -> str:
+    async def generate_diary(self, group_id: str = "", topic: str | None = None) -> str:
         """根据聊天记录生成日记"""
         get_using = self.context.get_using_provider()
         if not get_using:
@@ -66,12 +65,12 @@ class LLMAction:
         contexts = []
 
         if group_id:
-            contexts = await self._get_msg_contexts(group_id, client)
+            contexts = await self._get_msg_contexts(group_id)
         else:
-            group_list = await client.get_group_list()
+            group_list = await self.client.get_group_list()
             group_ids = [group["group_id"] for group in group_list]
             random_group_id = str(random.choice(group_ids))  # 随机获取一个群组
-            contexts = await self._get_msg_contexts(random_group_id, client)
+            contexts = await self._get_msg_contexts(random_group_id)
         # TODO: 更多模式
 
         system_prompt = (
@@ -100,14 +99,14 @@ class LLMAction:
         if not using_provider:
             raise ValueError("未配置 LLM 提供商")
         try:
-            prompt = f"\n这条帖子的具体内容如下：\n{post.text}"
+            prompt = f"\n这条帖子的具体内容如下：\n{post.text}\n{post.rt_con}"
             logger.debug(prompt)
             llm_response = await using_provider.text_chat(
                 system_prompt=self.config["comment_prompt"],
                 prompt=prompt,
                 image_urls=post.images,
             )
-            comment = llm_response.completion_text.rstrip("。")
+            comment = llm_response.completion_text
             logger.info(f"LLM 生成的评论：{comment}")
             return comment
 

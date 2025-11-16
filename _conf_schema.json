@@ -17,15 +17,15 @@
         "default": "请根据帖子内容生成一条精辟简短的评论, 评论要抓住主题"
     },
     "diary_prompt": {
-        "description": "写日记的llm提示词",
+        "description": "写说说时用的llm提示词",
         "type": "text",
         "hint": "建议自行根据Bot人格进行改写，从而达到更好的效果",
         "default": "请从聊天记录中找出一个你感兴趣的主题来写日记，讲讲感慨、心得，语气比较哲学"
     },
     "diary_max_msg": {
-        "description": "用于写日记的聊天记录的最大条数",
+        "description": "用于写说说的聊天记录的最大条数",
         "type": "int",
-        "hint": "过长会爆上下文",
+        "hint": "过长会爆上下文，一般几百条足矣",
         "default": 500
     },
     "publish_cron": {

@@ -99,7 +99,7 @@ class Post(pydantic.BaseModel):
             f"### {self.name}{'投稿' if is_pending else '发布'}于{datetime.fromtimestamp(self.create_time).strftime('%Y-%m-%d %H:%M')}"
         ]
         if self.text:
-            lines.append(f"\n\n{self.text}\n\n")
+            lines.append(f"\n\n{remove_em_tags(self.text)}\n\n")
         if self.images:
             images_str = "\n".join(f"  ![图片]({img})" for img in self.images)
             lines.append(images_str)

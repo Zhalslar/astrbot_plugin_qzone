@@ -45,5 +45,11 @@
         "type": "int",
         "hint": "决定每次获取的QQ空间最近说说的数量，用于定时自动点赞、评论，注意：评论过的说说会自动跳过",
         "default": 20
+    },
+    "campus_wall_switch": {
+        "description": "校园墙开关",
+        "type": "bool",
+        "hint": "是否开启校园墙功能，功能包括：投稿、查看稿件、通过投稿、拒绝投稿",
+        "default": true
     }
 }

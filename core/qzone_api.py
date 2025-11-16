@@ -9,8 +9,6 @@ from http.cookies import SimpleCookie
 from typing import Any
 
 import aiohttp
-import bs4
-import json5
 from aiocqhttp import CQHttp
 
 from astrbot.api import logger
@@ -125,25 +123,8 @@ class Qzone:
         ) as resp:
             if resp.status not in [200, 401, 403]:
                 raise RuntimeError(f"请求失败，状态码: {resp.status}")
-
-            if resp.status in [401, 403] and self.client:
-                logger.warning(
-                    f"请求失败，状态码: {resp.status}，正在尝试重新登录QQ空间..."
-                )
-                if not await self.login():
-                    raise RuntimeError("重新登录失败，无法继续请求")
-                logger.info("重新登录成功，继续请求...")
-                return await self._request(
-                    method,
-                    url,
-                    params=params,
-                    data=data,
-                    headers=headers or self.headers,
-                    timeout=timeout,
-                    retry_count=retry_count + 1,
-                )
-
             resp_text = await resp.text()
+            logger.debug(f"原始数据: {resp_text}")
             json_str = ""
             if m := re.search(
                 r"callback\s*\(\s*([^{]*(\{.*\})[^)]*)\s*\)", resp_text, re.I | re.S
@@ -154,16 +135,23 @@ class Qzone:
 
             try:
                 parse_data = json.loads(json_str.strip() or resp_text)
-                logger.debug(f"初解析原始说说数据: {parse_data}")
             except json.JSONDecodeError as e:
                 logger.error(f"JSON 解析错误: {e}")
                 raise
             # 重登机制
-            if parse_data.get("code") == -3000:
+            if resp.status in [401, 403] or parse_data.get("code") == -3000:
                 logger.warning("请求失败，状态码: -3000，正在尝试重新登录QQ空间...")
                 if not await self.login():
                     raise RuntimeError("重新登录失败，无法继续请求")
-                logger.info("重新登录成功，继续请求...")
+                return await self._request(
+                    method,
+                    url,
+                    params=params,
+                    data=data,
+                    headers=headers or self.headers,
+                    timeout=timeout,
+                    retry_count=retry_count + 1,
+                )
             return parse_data
 
 
@@ -420,7 +408,7 @@ class Qzone:
                 "replynum": 100,  # 评论数
                 "callback": "_preloadCallback",
                 "code_version": 1,
-                "format": "jsonp",
+                "format": "json",
                 "need_comment": 1,
                 "need_private_comment": 1,
             },
@@ -476,6 +464,25 @@ class Qzone:
             posts.append(post)
 
         return posts
+
+    # async def delete(self, tid: str):
+    #     """删除tid对应说说"""
+
+    #     DELETE_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_delete_v6"
+    #     return await self._request(
+    #         "POST",
+    #         url=DELETE_URL,
+    #         params={"g_tk": self.gtk2},
+    #         data={
+    #             "tid": tid,
+    #             "hostUin": self.uin,
+    #             "qzreferrer": f"{self.BASE_URL}/{self.uin}",
+    #             "t1_source": 1,
+    #             "code_version": 1,
+    #             "format": "fs",
+    #         },
+    #     )
+
 
 
     # async def monitor_get_qzones(self, self_readnum: int) -> list[dict[str, Any]]:

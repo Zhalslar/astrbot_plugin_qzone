@@ -9,6 +9,7 @@ from astrbot.api import logger
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core import AstrBotConfig
+from astrbot.core.config.default import VERSION
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
@@ -16,6 +17,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
     AiocqhttpAdapter,
 )
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+from astrbot.core.utils.version_comparator import VersionComparator
 
 from .core.auto_comment import AutoComment
 from .core.auto_publish import AutoPublish
@@ -32,6 +34,10 @@ class QzonePlugin(Star):
         super().__init__(context)
         self.context = context
         self.config = config
+
+        # 检查版本
+        if not VersionComparator.compare_version(VERSION, "4.1.0") >= 0:
+            raise Exception("AstrBot 版本过低, 请升级至 4.1.0 或更高版本")
 
         # pillowmd样式目录
         default_style_dir = (
@@ -58,12 +64,12 @@ class QzonePlugin(Star):
             logger.error(f"无法加载pillowmd样式：{e}")
 
         # 加载、重载插件时登录QQ空间
-        await self.initialize_qzone(False)
+        asyncio.create_task(self.initialize_qzone(False))
 
     @filter.on_platform_loaded()
     async def on_platform_loaded(self):
         """平台加载完成时，登录QQ空间"""
-        await self.initialize_qzone(True)
+        asyncio.create_task(self.initialize_qzone(True))
 
     async def initialize_qzone(self, wait_ws_connected: bool = False):
         """初始化QQ空间、自动评论模块、自动发说说模块"""
@@ -89,7 +95,7 @@ class QzonePlugin(Star):
 
         # 登录QQ空间（独立运行）
         self.qzone = Qzone(client)
-        asyncio.create_task(self.qzone.login())
+        await self.qzone.login()
 
         # llm内容生成器
         self.llm = LLMAction(self.context, self.config, client)
@@ -99,22 +105,27 @@ class QzonePlugin(Star):
         #     self.auto_comment = AutoComment(
         #         self.context, self.config, self.qzone, self.llm
         #     )
+        #       logger.info("自动发说说模块加载完毕！")
+
         # 加载自动发说说模块
         if self.config.get("comment_cron"):
             self.auto_publish = AutoPublish(
                 self.context, self.config, self.qzone, self.llm
             )
+            logger.info("自动发说说模块加载完毕！")
 
         # 加载表白墙模块
-        self.campus_wall = CampusWall(
-            self.context,
-            self.config,
-            self.qzone,
-            self.llm,
-            self.pm,
-            self.cache,
-            self.style,
-        )
+        if self.config.get("campus_wall_switch"):
+            self.campus_wall = CampusWall(
+                self.context,
+                self.config,
+                self.qzone,
+                self.llm,
+                self.pm,
+                self.cache,
+                self.style,
+            )
+            logger.info("表白墙模块加载完毕！")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("查看访客")
@@ -126,14 +137,15 @@ class QzonePlugin(Star):
         img_path = img.Save(self.cache)
         yield event.image_result(str(img_path))
 
-    async def _get_posts(self, event: AiocqhttpMessageEvent) -> list[Post]:
+    async def _get_posts(self, event: AiocqhttpMessageEvent, target_id: str="") -> list[Post]:
         """获取说说，返回稿件列表"""
         # 解析目标用户
-        at_ids = get_ats(event)
-        target_id = at_ids[0] if at_ids else event.get_sender_id()
-        end_parm = event.message_str.split(" ")[-1]
+        if not target_id:
+            at_ids = get_ats(event)
+            target_id = at_ids[0] if at_ids else event.get_sender_id()
 
         # 解析范围参数
+        end_parm = event.message_str.split(" ")[-1]
         if "~" in end_parm:
             start_index, end_index = map(int, end_parm.split("~"))
             index = start_index
@@ -222,6 +234,17 @@ class QzonePlugin(Star):
             else:
                 yield event.plain_result(f"评论失败: {res.get('message')}")
                 logger.error(f"评论失败: {res}")
+
+    # @filter.command("删除说说")
+    # async def delete_qzone(self, event: AiocqhttpMessageEvent):
+    #     """删除说说 <序号>"""
+    #     posts = await self._get_posts(event=event, target_id=event.get_self_id())
+    #     for post in posts:
+    #         res = await self.qzone.delete(post.tid)
+    #         if res.get("code") == 0:
+    #             yield event.plain_result(f"已删除{post.name}的说说: {post.text[:10]}")
+    #         else:
+    #             yield event.plain_result(f"删除失败: {res.get('message')}")
 
     async def _publish(
         self, event: AiocqhttpMessageEvent, text: str, images: list[str]

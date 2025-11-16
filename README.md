@@ -90,3 +90,10 @@ git clone https://github.com/Zhalslar/astrbot_plugin_qzone
 ## 🤝 鸣谢
 
 - 部分代码参考了[CampuxBot项目](https://github.com/idoknow/CampuxBot)，由作者之一的Soulter推荐
+
+- [QQ 空间爬虫之爬取说说](https://kylingit.com/blog/qq-空间爬虫之爬取说说/)
+  感谢这篇博客提供的思路。
+
+- [一个QQ空间爬虫项目](https://github.com/wwwpf/QzoneExporter)
+
+- [QQ空间](https://qzone.qq.com/) 网页显示本地数据时使用的样式与布局均来自于QQ空间。

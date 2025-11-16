@@ -107,7 +107,7 @@ class Post(pydantic.BaseModel):
             videos_str = "\n".join(f"  [视频]({vid})" for vid in self.videos)
             lines.append(videos_str)
         if self.rt_con:
-            lines.append(f"  转发：{self.rt_con}")
+            lines.append(f"  转发：{remove_em_tags(self.rt_con)}")
         if self.comments:
             lines.append("\n\n【评论区】\n")
             for comment in self.comments:

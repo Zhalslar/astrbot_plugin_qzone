@@ -8,6 +8,7 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.star.context import Context
 
 from .llm_action import LLMAction
+from .post import Post
 from .qzone_api import Qzone
 
 
@@ -62,8 +63,14 @@ class AutoPublish:
         """
         logger.info("[AutoPublish] 执行自动发说说任务")
 
-        diary_text = await self.llm.generate_diary()
-        await self.qzone.publish_emotion(text=diary_text)
+        text = await self.llm.generate_diary()
+        # TODO: llm配图
+        #images = await self.llm.generate_images(text, self.per_qzone_num)
+        post = Post(text=text, status="approved")
+        res = await self.qzone.publish(post)
+        if error := res.get("error"):
+            logger.error(f"[AutoPublish] 发说说失败：{error}")
+            raise error
 
     async def terminate(self):
         self.scheduler.remove_all_jobs()

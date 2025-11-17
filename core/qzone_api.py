@@ -66,6 +66,12 @@ class Qzone:
             timeout=aiohttp.ClientTimeout(total=10),
         )
         self.client = client
+        self.skey = ""
+        self.p_skey = ""
+        self.uin = 0
+        self.gtk2 = ""
+        self.raw_cookies = {}
+        self.headers = {}
 
     async def login(self) -> bool:
         """登录QQ空间"""
@@ -73,10 +79,10 @@ class Qzone:
             cookie_str = (
                 await self.client.get_cookies(domain="user.qzone.qq.com")
             ).get("cookies", "")
-            self.cookies = {k: v.value for k, v in SimpleCookie(cookie_str).items()}
-            self.skey = self.cookies.get("skey", "")
-            self.p_skey = self.cookies.get("p_skey", "")
-            self.uin = int(self.cookies.get("uin", "0")[1:])
+            cookies = {k: v.value for k, v in SimpleCookie(cookie_str).items()}
+            self.skey = cookies.get("skey", "")
+            self.p_skey = cookies.get("p_skey", "")
+            self.uin = int(cookies.get("uin", "0")[1:])
             self.gtk2 = generate_gtk(self.p_skey)
             self.raw_cookies = {
                 "uin": f"o{self.uin}",
@@ -88,7 +94,7 @@ class Qzone:
                 "referer": f"{self.BASE_URL}/{self.uin}",
                 "origin": f"{self.BASE_URL}",
             }
-            logger.info(f"Qzone 登录成功: {self.cookies}")
+            logger.info(f"Qzone 登录成功: {cookies}")
             return True
         except Exception as e:
             logger.error(f"Qzone 登录失败: {e}")
@@ -135,11 +141,12 @@ class Qzone:
 
             try:
                 parse_data = json.loads(json_str.strip() or resp_text)
+                code = parse_data.get("code")
             except json.JSONDecodeError as e:
                 logger.error(f"JSON 解析错误: {e}")
                 raise
             # 重登机制
-            if resp.status in [401, 403] or parse_data.get("code") == -3000:
+            if resp.status in [401, 403] or code == -3000:
                 logger.warning("请求失败，状态码: -3000，正在尝试重新登录QQ空间...")
                 if not await self.login():
                     raise RuntimeError("重新登录失败，无法继续请求")
@@ -152,10 +159,12 @@ class Qzone:
                     timeout=timeout,
                     retry_count=retry_count + 1,
                 )
+            if code != 0:
+                return {"error": parse_data.get("message") or f"请求失败[{code}]"}
             return parse_data
 
 
-    async def _upload_image(self, image: bytes) -> dict[str, Any]:
+    async def _upload_image(self, image: bytes) -> dict:
         """上传单张图片"""
         return await self._request(
             method="POST",
@@ -189,7 +198,7 @@ class Qzone:
             }
         )
 
-    def parse_qzone_visitors(self, data: dict) -> str:
+    def parse_visitors(self, data: dict) -> str:
         """
         把 QQ 空间访客接口的数据解析成易读文本。
         """
@@ -246,13 +255,13 @@ class Qzone:
 
         return "\n".join(lines)
 
-    async def publish_emotion(self, text: str, images: list[str] | None = None) -> str:
+    async def publish(self, post: Post) -> dict:
         """发表说说, 返回tid"""
         post_data: dict[str, Any] = {
             "syn_tweet_verson": "1",
             "paramstr": "1",
             "who": "1",
-            "con": text,
+            "con": post.text,
             "feedversion": "1",
             "ver": "1",
             "ugc_right": "1",
@@ -262,9 +271,9 @@ class Qzone:
             "format": "json",
             "qzreferrer": f"{self.BASE_URL}/{self.uin}",
         }
-        if images:
+        if post.images:
             pic_bos, richvals = [], []
-            imgs: list[bytes] = await normalize_images(images)
+            imgs: list[bytes] = await normalize_images(post.images)
             for img in imgs:
                 up_json = await self._upload_image(img)
                 picbo, richval = parse_upload_result(up_json)
@@ -277,14 +286,14 @@ class Qzone:
                 richval="\t".join(richvals),
             )
 
-        params = {"g_tk": self.gtk2, "uin": self.uin}
-
-        res = await self._request(
-            "POST", url=self.EMOTION_URL, params=params, data=post_data
+        return await self._request(
+            method="POST",
+            url=self.EMOTION_URL,
+            params={"g_tk": self.gtk2, "uin": self.uin},
+            data=post_data,
         )
-        return res.get("tid", "")
 
-    async def like(self, fid: str, target_id: str):
+    async def like(self, fid: str, target_id: str) -> dict:
         """
         点赞指定说说。
 
@@ -315,7 +324,7 @@ class Qzone:
             }
         )
 
-    async def comment(self, fid: str, target_id: str, content: str):
+    async def comment(self, fid: str, target_id: str, content: str) -> dict:
         """
         评论指定说说。
 
@@ -383,11 +392,9 @@ class Qzone:
             )
         return comments[::-1]
 
-    async def get_qzones(
-        self, target_id: str, pos: int = 1, num: int = 1
-    ) -> list[Post]:
+    async def get_posts(self, target_id: str, pos: int = 1, num: int = 1) -> dict:
         """
-        获取指定QQ号的好友说说列表，返回转化后的 Post 列表。
+        获取指定QQ号的好友说说列表
 
         Args:
             target_id (str): 目标QQ号。
@@ -395,7 +402,7 @@ class Qzone:
             num (int): 要获取的说说数量。
         """
         logger.info(f"正在获取 {target_id} 的说说列表...")
-        res = await self._request(
+        return await self._request(
             method="GET",
             url=self.LIST_URL,
             params={
@@ -411,14 +418,10 @@ class Qzone:
                 "format": "json",
                 "need_comment": 1,
                 "need_private_comment": 1,
-            },
+            }
         )
-        if res.get("code") != 0:
-            raise Exception(f"说说获取失败: {res}")
 
-        return self.parse_qzone_list(res)
-
-    def parse_qzone_list(self, data: dict):
+    def parse_posts(self, data: dict) -> list[Post]:
         """解析说说列表"""
         posts = []
         msglist = data.get("msglist") or []

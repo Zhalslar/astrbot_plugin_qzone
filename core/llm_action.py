@@ -106,7 +106,7 @@ class LLMAction:
                 prompt=prompt,
                 image_urls=post.images,
             )
-            comment = llm_response.completion_text
+            comment = llm_response.completion_text.rstrip("。")
             logger.info(f"LLM 生成的评论：{comment}")
             return comment
 

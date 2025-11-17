@@ -8,8 +8,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 )
 from astrbot.core.star.context import Context
 
-from .llm_action import LLMAction
-from .post import Post, PostManager
+from .post import Post, PostDB
 from .qzone_api import Qzone
 from .utils import get_image_urls
 
@@ -20,16 +19,12 @@ class CampusWall:
         context: Context,
         config: AstrBotConfig,
         qzone: Qzone,
-        llm: LLMAction,
-        post_manager: PostManager,
-        cache,
+        db: PostDB,
         style
     ):
         self.qzone = qzone
-        self.llm = llm
-        self.pm = post_manager
+        self.db = db
         self.style =style
-        self.cache = cache
         # 管理群ID，审批信息会发到此群
         self.manage_group: int = config.get("manage_group", 0)
         # 管理员QQ号列表，审批信息会私发给这些人
@@ -92,22 +87,23 @@ class CampusWall:
 
     async def contribute(self, event: AiocqhttpMessageEvent):
         """投稿 <文字+图片>"""
+        sender_name = event.get_sender_name()
+        raw_text = event.message_str.removeprefix("投稿").strip()
+        text = f"【来自 {sender_name} 的投稿】\n\n{raw_text}"
+        images = await get_image_urls(event)
         post = Post(
             uin=int(event.get_sender_id()),
-            name=event.get_sender_name(),
+            name=sender_name,
             gin=int(event.get_group_id() or 0),
-            text=event.message_str.removeprefix("投稿").strip(),
-            images=await get_image_urls(event),
+            text=text,
+            images=images,
             anon=False,
             status="pending",
         )
-        post.id = await self.pm.add(post)
+        await post.save(self.db)
         # 渲染图片
-        img = await self.style.AioRender(
-            text=post.to_str(), useImageUrl=True, autoPage=False
-        )
-        img_path = img.Save(self.cache)
-        img_seg = Image.fromFileSystem(str(img_path))
+        img_path = await post.to_image(self.style)
+        img_seg = Image.fromFileSystem(img_path)
 
         # 通知投稿者
         chain = [Plain("已投，等待审核..."), img_seg]
@@ -119,36 +115,47 @@ class CampusWall:
         event.stop_event()
 
 
-    async def view(self, event: AiocqhttpMessageEvent, post_id: int = -1):
+    async def view(self, event: AiocqhttpMessageEvent, post_id: int):
         "查看稿件 <ID>, 默认最新稿件"
-        post = await self.pm.get(key="id", value=post_id)
+        post = await self.db.get(post_id)
         if not post:
             await event.send(event.plain_result(f"稿件#{post_id}不存在"))
             return
-        img = await self.style.AioRender(
-            text=post.to_str(), useImageUrl=True, autoPage=False
-        )
-        img_path = img.Save(self.cache)
-        await event.send(event.image_result(str(img_path)))
+        img_path = await post.to_image(self.style)
+        await event.send(event.image_result(img_path))
 
 
     async def approve(self, event: AiocqhttpMessageEvent, post_id: int):
-        """通过投稿 <稿件ID>"""
-        # 更新稿件状态
-        await self.pm.update(post_id, key="status", value="approved")
-        post = await self.pm.get(key="id", value=post_id)
+        """通过投稿 <稿件ID>, 默认最新稿件"""
+        post = await self.db.get(post_id)
         if not post:
+            await event.send(event.plain_result(f"稿件#{post_id}不存在"))
+            return
+
+        if post.status == "approved":
+            await event.send(
+                event.plain_result(f"稿件#{post_id}已通过，请勿重复通过")
+            )
             return
 
         # 发布说说
-        tid = await self.qzone.publish_emotion(text=post.text, images=post.images)
-        await self.pm.update(post_id, key="tid", value=tid)
+        res = await self.qzone.publish(post)
+
+        # 处理错误
+        if error := res.get("error"):
+            await event.send(event.plain_result(error))
+            logger.error(f"发布说说失败：{error}")
+            event.stop_event()
+            raise error
+
+        # 更新字段，存入数据库
+        post.tid = res["tid"]
+        post.create_time = res["now"]
+        post.status = "approved"
+        await post.save(self.db)
 
         # 渲染图片
-        img = await self.style.AioRender(
-            text=post.to_str(), useImageUrl=True, autoPage=False
-        )
-        img_path = img.Save(self.cache)
+        img_path = await post.to_image(self.style)
         img_seg = Image.fromFileSystem(str(img_path))
 
         # 通知管理员
@@ -163,18 +170,36 @@ class CampusWall:
             group_id=post.gin,
             user_id=post.uin,
         )
-        logger.info(f"已发布说说#{post_id}, 说说tid: {tid}")
+        logger.info(f"已发布说说#{post_id}")
 
 
     async def reject(self, event: AiocqhttpMessageEvent, post_id: int):
         """拒绝投稿 <稿件ID> <原因>"""
-        # 更新稿件状态
-        await self.pm.update(post_id, key="status", value="rejected")
-        post = await self.pm.get(key="id", value=post_id)
+        post = await self.db.get(post_id)
         if not post:
+            await event.send(event.plain_result(f"稿件#{post_id}不存在"))
+            return
+
+        if post.status == "rejected":
+            await event.send(
+                event.plain_result(f"稿件#{post_id}已拒绝，请勿重复拒绝")
+            )
+            return
+
+        if post.status == "approved":
+            await event.send(
+                event.plain_result(f"稿件#{post_id}已发布，无法拒绝")
+            )
             return
 
         reason = event.message_str.removeprefix("不通过").strip()
+
+        # 更新字段，存入数据库
+        post.status = "rejected"
+        if reason:
+            post.extra_text = reason
+        await post.save(self.db)
+
         # 通知管理员
         admin_msg = f"已拒绝稿件#{post_id}"
         if reason:

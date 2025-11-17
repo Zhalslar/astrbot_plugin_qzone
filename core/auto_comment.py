@@ -26,7 +26,7 @@ class AutoComment:
         llm: LLMAction,
     ):
         self.qzone = qzone
-        self.friend_ids = []
+        self.friend_ids = [] # TODO:等待接口完善，取最近说说列表
         self.llm = llm
 
         self.per_qzone_num = config.get("per_qzone_num", 5)
@@ -82,25 +82,26 @@ class AutoComment:
         """
         获取好友最近说说，自动点赞 & 评论
         """
-        posts: list[Post] = await self.qzone.get_qzones(
+        res = await self.qzone.get_posts(
             target_id=str(uin), pos=1, num=self.per_qzone_num
         )
-        if not posts:
-            return
-
-        for post in posts:
-            await self.like_post(post)
-            await self.comment_post(post)
-            await asyncio.sleep(1)
+        if error := res.get("error"):
+            logger.error(f"获取说说失败：{error}")
+            raise error
+        if posts := self.qzone.parse_posts(res):
+            for post in posts:
+                await self.like_post(post)
+                await self.comment_post(post)
+                await asyncio.sleep(1)
 
 
     async def like_post(self, post: Post):
         try:
             res = await self.qzone.like(fid=post.tid, target_id=str(post.uin))
-            if res.get("code") == 0:
-                logger.info(f"[AutoComment] 已点赞: {post.uin}/{post.tid}")
-            else:
-                logger.warning(f"[AutoComment] 点赞失败: {res}")
+            if error := res.get("error"):
+                logger.error(f"[AutoComment] 点赞失败: {error}")
+                raise error
+            logger.info(f"[AutoComment] 已点赞: {post.name}({post.uin})/{post.tid} ")
         except Exception as e:
             logger.error(f"[AutoComment] 点赞异常: {e}")
 
@@ -114,10 +115,13 @@ class AutoComment:
                 target_id=str(post.uin),
                 content=content,
             )
-            if res.get("code") == 0:
-                logger.info(f"[AutoComment] 已评论: {post.uin}/{post.tid} -> {content}")
-            else:
-                logger.warning(f"[AutoComment] 评论失败: {res}")
+            if error := res.get("error"):
+                logger.error(f"[AutoComment] 评论失败: {error}")
+                raise error
+            logger.info(
+                f"[AutoComment] 已评论: {post.name}({post.uin})/{post.tid} -> {content}"
+            )
+
         except Exception as e:
             logger.error(f"[AutoComment] 评论异常: {e}")
 

@@ -9,6 +9,8 @@ from pathlib import Path
 import aiosqlite
 import pydantic
 
+from astrbot.core.star.star_tools import StarTools
+
 post_key = typing.Literal[
     "id",
     "tid",
@@ -73,9 +75,9 @@ class Post(pydantic.BaseModel):
     """群聊ID"""
     text: str = ""
     """文本内容"""
-    images: list[str] = []
+    images: list[str] = pydantic.Field(default_factory=list)
     """图片列表"""
-    videos: list[str] = []
+    videos: list[str] = pydantic.Field(default_factory=list)
     """视频列表"""
     anon: bool = False
     """是否匿名"""
@@ -87,7 +89,7 @@ class Post(pydantic.BaseModel):
     """创建时间"""
     rt_con: str = ""
     """转发内容"""
-    comments: list[dict] = []
+    comments: list[dict] = pydantic.Field(default_factory=list)
     """评论列表"""
     extra_text: str | None = None
     """额外文本"""
@@ -123,6 +125,13 @@ class Post(pydantic.BaseModel):
                 )
         return "\n".join(lines)
 
+    async def to_image(self, style) -> str:
+        """转入渲染器样式，把 Post 转换成图片, 返回图片路径"""
+        img = await style.AioRender(
+            text=self.to_str(), useImageUrl=True, autoPage=False
+        )
+        return str(img.Save(StarTools.get_data_dir("astrbot_plugin_qzone") / "cache"))
+
     def update(self, **kwargs):
         """更新 Post 对象的属性"""
         for key, value in kwargs.items():
@@ -131,8 +140,28 @@ class Post(pydantic.BaseModel):
             else:
                 raise AttributeError(f"Post 对象没有属性 {key}")
 
+    async def save(self, db: "PostDB") -> int:
+        # tid 已经补上时 → 优先按 tid 覆盖，而不是 id
+        if self.tid and self.tid.strip():
+            old = await db.get(key="tid", value=self.tid)
+            if old:
+                # 把已有记录的 id 继承过来
+                self.id = old.id
+                await db.update(self)
+                return self.id # type: ignore
 
-class PostManager:
+        # 如果 self.id 为空 → 执行 INSERT
+        if self.id is None:
+            new_id = await db.add(self)
+            self.id = new_id
+            return new_id
+
+        # 正常 UPDATE
+        await db.update(self)
+        return self.id
+
+
+class PostDB:
     # 允许查询的列
     ALLOWED_QUERY_KEYS = {
         "id",
@@ -177,13 +206,13 @@ class PostManager:
     def _encode_urls(urls: list[str]) -> str:
         return json.dumps(urls, ensure_ascii=False)
 
-    async def init_db(self):
+    async def initialize(self):
         """初始化数据库"""
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS posts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    tid TEXT NOT NULL DEFAULT '',
+                    tid TEXT NOT NULL UNIQUE,
                     uin INTEGER NOT NULL,
                     name TEXT NOT NULL,
                     gin INTEGER NOT NULL,
@@ -229,12 +258,7 @@ class PostManager:
             assert last_id is not None
             return last_id
 
-    async def get(
-        self,
-        *,
-        key: post_key = "id",
-        value,
-    ) -> Post | None:
+    async def get(self, value, key: post_key = "id") -> Post | None:
         """根据指定字段查询一条稿件记录，默认按 id 查询"""
         if value is None:
             raise ValueError("必须提供查询值")
@@ -245,28 +269,34 @@ class PostManager:
                 row = await cursor.fetchone()
                 return self._row_to_post(row) if row else None
 
-    async def update(
-        self,
-        post_id: int | None,
-        key: post_key,
-        value,
-    ) -> int:
-        if key not in self.ALLOWED_QUERY_KEYS:
-            raise ValueError(f"不允许更新的字段: {key}")
-
-        # 如果值是 list 或 dict 类型，自动将其转换为 JSON 字符串
-        if isinstance(value, list | dict):
-            value = json.dumps(value, ensure_ascii=False)
-
-        if post_id is None:
-            raise ValueError("post_id未生成，请先用add方法将Post存入数据库")
-
+    async def update(self, post: Post) -> None:
         async with aiosqlite.connect(self.db_path) as db:
-            cur = await db.execute(
-                f"UPDATE posts SET {key} = ? WHERE id = ?", (value, post_id)
+            await db.execute(
+                """
+                UPDATE posts SET
+                    tid = ?, uin = ?, name = ?, gin = ?, text = ?,
+                    images = ?, videos = ?, anon = ?, status = ?,
+                    create_time = ?, rt_con = ?, comments = ?, extra_text = ?
+                WHERE id = ?
+                """,
+                (
+                    post.tid,
+                    post.uin,
+                    post.name,
+                    post.gin,
+                    post.text,
+                    self._encode_urls(post.images),
+                    self._encode_urls(post.videos),
+                    int(post.anon),
+                    post.status,
+                    post.create_time,
+                    post.rt_con,
+                    json.dumps(post.comments, ensure_ascii=False),
+                    post.extra_text,
+                    post.id,
+                ),
             )
             await db.commit()
-            return cur.rowcount
 
     async def delete(self, post_id: int) -> int:
         """删除稿件"""

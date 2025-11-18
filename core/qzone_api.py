@@ -17,34 +17,35 @@ from .post import Post
 from .utils import normalize_images
 
 
-# ---------- 工具函数 ----------
-def generate_gtk(skey: str) -> str:
-    """生成 QQ 空间 gtk"""
-    hash_val = 5381
-    for ch in skey:
-        hash_val += (hash_val << 5) + ord(ch)
-    return str(hash_val & 0x7FFFFFFF)
+class QzoneContext:
+    """统一封装 Qzone 请求所需的所有动态参数"""
 
+    def __init__(self, uin: int, skey: str, p_skey: str):
+        self.uin = uin
+        self.skey = skey
+        self.p_skey = p_skey
 
-def parse_upload_result(payload: dict[str, Any]) -> tuple[str, str]:
-    """从上传返回体里提取 picbo 与 richval"""
-    if payload.get("ret") != 0:
-        raise RuntimeError("图片上传失败")
+    @property
+    def gtk2(self) -> str:
+        """动态计算 gtk2"""
+        hash_val = 5381
+        for ch in self.p_skey:
+            hash_val += (hash_val << 5) + ord(ch)
+        return str(hash_val & 0x7FFFFFFF)
 
-    data = payload["data"]
-    picbo = data["url"].split("&bo=", 1)[1]
+    def cookies(self) -> dict[str, str]:
+        return {
+            "uin": f"o{self.uin}",
+            "skey": self.skey,
+            "p_skey": self.p_skey,
+        }
 
-    richval = ",{},{},{},{},{},{},,{},{}".format(
-        data["albumid"],
-        data["lloc"],
-        data["sloc"],
-        data["type"],
-        data["height"],
-        data["width"],
-        data["height"],
-        data["width"],
-    )
-    return picbo, richval
+    def headers(self) -> dict[str, str]:
+        return {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+            "referer": f"https://user.qzone.qq.com/{self.uin}",
+            "origin": "https://user.qzone.qq.com",
+        }
 
 
 class Qzone:
@@ -66,39 +67,31 @@ class Qzone:
             timeout=aiohttp.ClientTimeout(total=10),
         )
         self.client = client
-        self.skey = ""
-        self.p_skey = ""
-        self.uin = 0
-        self.gtk2 = ""
-        self.raw_cookies = {}
-        self.headers = {}
+        self.ctx: QzoneContext = None  # type: ignore
 
     async def login(self) -> bool:
-        """登录QQ空间"""
+        logger.info("正在登录QQ空间...")
         try:
             cookie_str = (
                 await self.client.get_cookies(domain="user.qzone.qq.com")
             ).get("cookies", "")
-            cookies = {k: v.value for k, v in SimpleCookie(cookie_str).items()}
-            self.skey = cookies.get("skey", "")
-            self.p_skey = cookies.get("p_skey", "")
-            self.uin = int(cookies.get("uin", "0")[1:])
-            self.gtk2 = generate_gtk(self.p_skey)
-            self.raw_cookies = {
-                "uin": f"o{self.uin}",
-                "skey": self.skey,
-                "p_skey": self.p_skey,
-            }
-            self.headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
-                "referer": f"{self.BASE_URL}/{self.uin}",
-                "origin": f"{self.BASE_URL}",
-            }
-            logger.info(f"Qzone 登录成功: {cookies}")
+            c = {k: v.value for k, v in SimpleCookie(cookie_str).items()}
+            uin = int(c.get("uin", "0")[1:])
+            if not uin:
+                raise RuntimeError("Cookie 中缺少合法 uin")
+            self.ctx = QzoneContext(
+                uin=uin, skey=c.get("skey", ""), p_skey=c.get("p_skey", "")
+            )
+            logger.info(f"登录成功，uin={uin}")
             return True
         except Exception as e:
-            logger.error(f"Qzone 登录失败: {e}")
+            logger.error(f"登录失败: {e}")
             return False
+
+    async def ready(self):
+        """准备好登录状态"""
+        if not self.ctx:
+            await self.login()
 
     async def _request(
         self,
@@ -123,8 +116,8 @@ class Qzone:
             url,
             params=params,
             data=data,
-            headers=headers or self.headers,
-            cookies=self.raw_cookies,
+            headers=headers or self.ctx.headers(),
+            cookies=self.ctx.cookies(),
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as resp:
             if resp.status not in [200, 401, 403]:
@@ -150,12 +143,22 @@ class Qzone:
                 logger.warning("请求失败，状态码: -3000，正在尝试重新登录QQ空间...")
                 if not await self.login():
                     raise RuntimeError("重新登录失败，无法继续请求")
+                # ✅ 重新构造参数（此时 self.ctx 已更新）
+                if params:
+                    params["g_tk"] = self.ctx.gtk2
+                    if "uin" in params:
+                        params["uin"] = self.ctx.uin
+                if data:
+                    data["p_skey"] = self.ctx.p_skey
+                    data["skey"] = self.ctx.skey
+                    if "uin" in data:
+                        data["uin"] = self.ctx.uin
                 return await self._request(
                     method,
                     url,
                     params=params,
                     data=data,
-                    headers=headers or self.headers,
+                    headers=headers or self.ctx.headers(),
                     timeout=timeout,
                     retry_count=retry_count + 1,
                 )
@@ -163,9 +166,9 @@ class Qzone:
                 return {"error": parse_data.get("message") or f"请求失败[{code}]"}
             return parse_data
 
-
     async def _upload_image(self, image: bytes) -> dict:
         """上传单张图片"""
+        await self.ready()
         return await self._request(
             method="POST",
             url=self.UPLOAD_IMAGE_URL,
@@ -174,31 +177,33 @@ class Qzone:
                 "filename": "filename",
                 "uploadtype": "1",
                 "albumtype": "7",
-                "skey": self.skey,
-                "uin": self.uin,
-                "p_skey": self.p_skey,
+                "skey": self.ctx.skey,
+                "uin": self.ctx.uin,
+                "p_skey": self.ctx.p_skey,
                 "output_type": "json",
                 "base64": "1",
                 "picfile": base64.b64encode(image).decode(),
-            }
+            },
         )
 
     async def get_visitor(self) -> dict:
         """获取今日/总访客数"""
+        await self.ready()
         return await self._request(
             method="GET",
             url=self.VISITOR_URL,
             params={
-                "uin": self.uin,
+                "uin": self.ctx.uin,
                 "mask": 7,
-                "g_tk": self.gtk2,
+                "g_tk": self.ctx.gtk2,
                 "page": 1,
                 "fupdate": 1,
                 "clear": 1,
-            }
+            },
         )
 
-    def parse_visitors(self, data: dict) -> str:
+    @staticmethod
+    def parse_visitors(data: dict) -> str:
         """
         把 QQ 空间访客接口的数据解析成易读文本。
         """
@@ -255,6 +260,27 @@ class Qzone:
 
         return "\n".join(lines)
 
+    @staticmethod
+    def parse_upload_result(payload: dict[str, Any]) -> tuple[str, str]:
+        """从上传返回体里提取 picbo 与 richval"""
+        if payload.get("ret") != 0:
+            raise RuntimeError("图片上传失败")
+
+        data = payload["data"]
+        picbo = data["url"].split("&bo=", 1)[1]
+
+        richval = ",{},{},{},{},{},{},,{},{}".format(
+            data["albumid"],
+            data["lloc"],
+            data["sloc"],
+            data["type"],
+            data["height"],
+            data["width"],
+            data["height"],
+            data["width"],
+        )
+        return picbo, richval
+
     async def publish(self, post: Post) -> dict:
         """发表说说, 返回tid"""
         post_data: dict[str, Any] = {
@@ -266,17 +292,17 @@ class Qzone:
             "ver": "1",
             "ugc_right": "1",
             "to_sign": "0",
-            "hostuin": self.uin,
+            "hostuin": self.ctx.uin,
             "code_version": "1",
             "format": "json",
-            "qzreferrer": f"{self.BASE_URL}/{self.uin}",
+            "qzreferrer": f"{self.BASE_URL}/{self.ctx.uin}",
         }
         if post.images:
             pic_bos, richvals = [], []
             imgs: list[bytes] = await normalize_images(post.images)
             for img in imgs:
                 up_json = await self._upload_image(img)
-                picbo, richval = parse_upload_result(up_json)
+                picbo, richval = self.parse_upload_result(up_json)
                 pic_bos.append(picbo)
                 richvals.append(richval)
 
@@ -289,7 +315,7 @@ class Qzone:
         return await self._request(
             method="POST",
             url=self.EMOTION_URL,
-            params={"g_tk": self.gtk2, "uin": self.uin},
+            params={"g_tk": self.ctx.gtk2, "uin": self.ctx.uin},
             data=post_data,
         )
 
@@ -302,15 +328,16 @@ class Qzone:
             target_id (str): 目标QQ号。
 
         """
+        await self.ready()
         return await self._request(
             method="POST",
             url=self.DOLIKE_URL,
             params={
-                "g_tk": self.gtk2,
+                "g_tk": self.ctx.gtk2,
             },
             data={
-                "qzreferrer": f"{self.BASE_URL}/{self.uin}",  # 来源
-                "opuin": self.uin,  # 操作者QQ
+                "qzreferrer": f"{self.BASE_URL}/{self.ctx.uin}",  # 来源
+                "opuin": self.ctx.uin,  # 操作者QQ
                 "unikey": f"{self.BASE_URL}/{target_id}/mood/{fid}",  # 动态唯一标识
                 "curkey": f"{self.BASE_URL}/{target_id}/mood/{fid}",  # 要操作的动态对象
                 "appid": 311,  # 应用ID(说说:311)
@@ -321,7 +348,7 @@ class Qzone:
                 "active": 0,  # 活动ID
                 "format": "json",  # 返回格式
                 "fupdate": 1,  # 更新标记
-            }
+            },
         )
 
     async def comment(self, fid: str, target_id: str, content: str) -> dict:
@@ -334,13 +361,14 @@ class Qzone:
             content (str): 评论的文本内容。
 
         """
+        await self.ready()
         return await self._request(
             "POST",
             url=self.COMMENT_URL,
-            params={"g_tk": self.gtk2},
+            params={"g_tk": self.ctx.gtk2},
             data={
                 "topicId": f"{target_id}_{fid}__1",  # 说说ID
-                "uin": self.uin,  # botQQ
+                "uin": self.ctx.uin,  # botQQ
                 "hostUin": target_id,  # 目标QQ
                 "feedsType": 100,  # 说说类型
                 "inCharset": "utf-8",  # 字符集
@@ -351,10 +379,11 @@ class Qzone:
                 "format": "fs",  # 返回格式
                 "ref": "feeds",  # 引用
                 "content": content,  # 评论内容
-            }
+            },
         )
 
-    def _get_comments(self, msg: dict) -> list[dict]:
+    @staticmethod
+    def _get_comments(msg: dict) -> list[dict]:
         comments = []
         for comment in msg.get("commentlist") or []:
             comment_time = comment.get("createTime", "") or comment.get(
@@ -401,12 +430,13 @@ class Qzone:
             pos (int): 起始位置。
             num (int): 要获取的说说数量。
         """
+        await self.ready()
         logger.info(f"正在获取 {target_id} 的说说列表...")
         return await self._request(
             method="GET",
             url=self.LIST_URL,
             params={
-                "g_tk": self.gtk2,
+                "g_tk": self.ctx.gtk2,
                 "uin": target_id,  # 目标QQ
                 "ftype": 0,  # 全部说说
                 "sort": 0,  # 最新在前
@@ -418,7 +448,7 @@ class Qzone:
                 "format": "json",
                 "need_comment": 1,
                 "need_private_comment": 1,
-            }
+            },
         )
 
     def parse_posts(self, data: dict) -> list[Post]:
@@ -485,8 +515,6 @@ class Qzone:
     #             "format": "fs",
     #         },
     #     )
-
-
 
     # async def monitor_get_qzones(self, self_readnum: int) -> list[dict[str, Any]]:
     #     """

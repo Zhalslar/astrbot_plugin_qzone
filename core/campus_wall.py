@@ -126,7 +126,7 @@ class CampusWall:
 
 
     async def approve(self, event: AiocqhttpMessageEvent, post_id: int):
-        """通过投稿 <稿件ID>, 默认最新稿件"""
+        """通过稿件 <稿件ID>, 默认最新稿件"""
         post = await self.db.get(post_id)
         if not post:
             await event.send(event.plain_result(f"稿件#{post_id}不存在"))
@@ -174,7 +174,7 @@ class CampusWall:
 
 
     async def reject(self, event: AiocqhttpMessageEvent, post_id: int):
-        """拒绝投稿 <稿件ID> <原因>"""
+        """拒绝稿件 <稿件ID> <原因>"""
         post = await self.db.get(post_id)
         if not post:
             await event.send(event.plain_result(f"稿件#{post_id}不存在"))
@@ -192,7 +192,7 @@ class CampusWall:
             )
             return
 
-        reason = event.message_str.removeprefix("不通过").strip()
+        reason = event.message_str.removeprefix(f"拒绝稿件 {post_id}").strip()
 
         # 更新字段，存入数据库
         post.status = "rejected"

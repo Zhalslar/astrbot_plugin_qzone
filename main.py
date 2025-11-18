@@ -93,9 +93,8 @@ class QzonePlugin(Star):
             except asyncio.TimeoutError:
                 logger.warning("等待 aiocqhttp WebSocket 连接超时")
 
-        # 登录QQ空间（独立运行）
+        # 登录QQ空间
         self.qzone = Qzone(client)
-        await self.qzone.login()
 
         # llm内容生成器
         self.llm = LLMAction(self.context, self.config, client)
@@ -268,7 +267,7 @@ class QzonePlugin(Star):
             gin=int(event.get_group_id() or 0),
             text=text,
             images=images,
-            status = "pending"
+            status="pending",
         )
         if publish:
             res = await self.qzone.publish(post)
@@ -288,7 +287,7 @@ class QzonePlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("发说说")
     async def publish_handle(self, event: AiocqhttpMessageEvent):
-        """发说说 <内容> <图片>, 用户指定内容"""
+        """发说说 <内容> <图片>, 由用户指定内容"""
         text = event.message_str.removeprefix("发说说").strip()
         images = await get_image_urls(event)
         await self._publish(event, text, images)
@@ -296,14 +295,14 @@ class QzonePlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("写说说")
     async def keep_diary(self, event: AiocqhttpMessageEvent, topic: str | None = None):
-        """写说说 <主题> <图片>, 由AI生成内容"""
+        """写说说 <主题> <图片>, 由AI生成内容后直接发布"""
         text = await self.llm.generate_diary(group_id=event.get_group_id(), topic=topic)
         images = await get_image_urls(event)
         await self._publish(event, text, images)
 
-    @filter.command("写草稿")
+    @filter.command("写稿", alias={"写草稿"})
     async def write_draft(self, event: AiocqhttpMessageEvent, topic: str | None = None):
-        """写草稿 <主题> <图片>, 写完后用‘通过稿件 ID’命令发布"""
+        """写稿 <主题> <图片>, 由AI写完后用‘通过稿件 ID’命令发布"""
         text = await self.llm.generate_diary(group_id=event.get_group_id(), topic=topic)
         images = await get_image_urls(event)
         await self._publish(event, text, images, publish=False)
@@ -313,7 +312,7 @@ class QzonePlugin(Star):
         """投稿 <内容> <图片>"""
         await self.campus_wall.contribute(event)
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.MEMBER)
     @filter.command("查看稿件")
     async def view_post(self, event: AiocqhttpMessageEvent, post_id: int = -1):
         "查看稿件 <稿件ID>, 默认最新稿件"

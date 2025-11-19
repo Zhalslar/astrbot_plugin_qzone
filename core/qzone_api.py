@@ -103,6 +103,7 @@ class Qzone:
         headers: dict[str, str] | None = None,
         timeout: int = 10,
         retry_count: int = 0,
+        return_raw = False
     ) -> dict:
         """aiohttp 包装"""
         if retry_count > 3:  # 限制递归深度
@@ -118,12 +119,14 @@ class Qzone:
             data=data,
             headers=headers or self.ctx.headers(),
             cookies=self.ctx.cookies(),
-            timeout=aiohttp.ClientTimeout(total=timeout),
+            timeout=aiohttp.ClientTimeout(total=timeout)
         ) as resp:
             if resp.status not in [200, 401, 403]:
                 raise RuntimeError(f"请求失败，状态码: {resp.status}")
             resp_text = await resp.text()
             logger.debug(f"原始数据: {resp_text}")
+            if return_raw:
+                return resp_text
             json_str = ""
             if m := re.search(
                 r"callback\s*\(\s*([^{]*(\{.*\})[^)]*)\s*\)", resp_text, re.I | re.S
@@ -283,6 +286,7 @@ class Qzone:
 
     async def publish(self, post: Post) -> dict:
         """发表说说, 返回tid"""
+        await self.ready()
         post_data: dict[str, Any] = {
             "syn_tweet_verson": "1",
             "paramstr": "1",
@@ -498,36 +502,35 @@ class Qzone:
 
         return posts
 
-    # async def delete(self, tid: str):
-    #     """删除tid对应说说"""
+    async def delete(self, tid: str):
+        """删除tid对应说说（接口暂时未接通）"""
 
-    #     DELETE_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_delete_v6"
-    #     return await self._request(
-    #         "POST",
-    #         url=DELETE_URL,
-    #         params={"g_tk": self.gtk2},
-    #         data={
-    #             "tid": tid,
-    #             "hostUin": self.uin,
-    #             "qzreferrer": f"{self.BASE_URL}/{self.uin}",
-    #             "t1_source": 1,
-    #             "code_version": 1,
-    #             "format": "fs",
-    #         },
-    #     )
+        DELETE_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_delete_v6"
+        await self.ready()
+        return await self._request(
+            "POST",
+            url=DELETE_URL,
+            params={"g_tk": self.ctx.gtk2},
+            data={
+                "tid": tid,
+                "hostUin": self.ctx.uin,
+                "qzreferrer": f"{self.BASE_URL}/{self.ctx.uin}",
+                "t1_source": 1,
+                "code_version": 1,
+                "format": "fs",
+            },
+        )
 
-    # async def monitor_get_qzones(self, self_readnum: int) -> list[dict[str, Any]]:
+    # async def get_recent_posts(self):
     #     """
     #     获取自己的好友说说列表，返回已读与未读的说说列表。
-    #     Args:
-    #         self_readnum: 需要获取完整评论的自己的最新说说数量
-
     #     """
+    #     await self.ready()
     #     res = await self._request(
     #         method="GET",
     #         url=self.ZONE_LIST_URL,
     #         params={
-    #             "uin": self.uin,  # QQ号
+    #             "uin": self.ctx.uin,  # QQ号
     #             "scope": 0,  # 访问范围
     #             "view": 1,  # 查看权限
     #             "filter": "all",  # 全部动态
@@ -539,21 +542,23 @@ class Qzone:
     #             "aisortBeginTime": 0,  # AI排序开始时间
     #             "begintime": 0,  # 开始时间
     #             "format": "json",  # 返回格式
-    #             "g_tk": self.gtk2,  # 令牌
+    #             "g_tk": self.ctx.gtk2,  # 令牌
     #             "useutf8": 1,  # 使用UTF8编码
     #             "outputhtmlfeed": 1,  # 输出HTML格式
-    #         }
+    #         },
+    #         return_raw=True
     #     )
+    #     feeds = await parse_qzone_feed(res)
 
-    #     if res.get("code") != 0:
-    #         raise Exception(f"说说获取失败: {res}")
+    #     for f in feeds:
+    #         print(f.dict())
 
-    #     #return self.parse_qzone_list(res)
-    #     print(res)
+
+    # async def parse_recent_posts(self, data: dict, self_readnum: int) -> list[dict[str, Any]]:
     #     try:
     #         feeds_list = []
     #         num_self = 0  # 记录自己的说说数量
-    #         for feed in res:
+    #         for feed in data:
     #             if not feed:  # 跳过None值
     #                 continue
     #             # 过滤广告类内容（appid=311）
@@ -561,7 +566,7 @@ class Qzone:
     #             if appid != "311":
     #                 continue
     #             target_qq = feed.get("uin", "")
-    #             if target_qq == str(self.uin):
+    #             if target_qq == str(self.ctx.uin):
     #                 num_self += 1  # 统计自己的说说数量
     #             tid = feed.get("key", "")
     #             if not target_qq or not tid:
@@ -687,9 +692,11 @@ class Qzone:
     #         )
     #         # 获取自己说说下的完整评论内容
     #         feeds_list = [
-    #             item for item in feeds_list if item.get("target_qq") != str(self.uin)
+    #             item
+    #             for item in feeds_list
+    #             if item.get("target_qq") != str(self.ctx.uin)
     #         ]  # 去除自己的说说
-    #         self_feeds = await self.get_qzones(str(self.uin), self_readnum)
+    #         self_feeds = await self.get_posts(str(self.ctx.uin), self_readnum)
     #         feeds_list.extend(self_feeds)
     #         return feeds_list
     #     except Exception as e:

@@ -101,9 +101,3 @@ async def normalize_images(images: Sequence[BytesOrStr] | None) -> list[bytes]:
         else:
             raise TypeError(f"image 必须是 str 或 bytes，收到 {type(item)}")
     return cleaned
-
-
-
-
-
-

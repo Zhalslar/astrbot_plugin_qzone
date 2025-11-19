@@ -241,16 +241,21 @@ class QzonePlugin(Star):
             img_path = await post.to_image(self.style)
             yield event.image_result(img_path)
 
-    # @filter.command("删除说说")
-    # async def delete_qzone(self, event: AiocqhttpMessageEvent):
-    #     """删除说说 <序号>"""
-    #     posts = await self._get_posts(event=event, target_id=event.get_self_id())
-    #     for post in posts:
-    #         res = await self.qzone.delete(post.tid)
-    #         if res.get("code") == 0:
-    #             yield event.plain_result(f"已删除{post.name}的说说: {post.text[:10]}")
-    #         else:
-    #             yield event.plain_result(f"删除失败: {res.get('message')}")
+    # @filter.command("测试")
+    # async def test(self, event: AiocqhttpMessageEvent):
+    #     await self.qzone.get_recent_posts()
+    #     event.stop_event()
+
+    #@filter.command("删除说说") # 接口测试中
+    async def delete_qzone(self, event: AiocqhttpMessageEvent):
+        """删除说说 <序号>"""
+        posts = await self._get_posts(event=event, target_id=event.get_self_id())
+        for post in posts:
+            res = await self.qzone.delete(post.tid)
+            if res.get("code") == 0:
+                yield event.plain_result(f"已删除{post.name}的说说: {post.text[:10]}")
+            else:
+                yield event.plain_result(f"删除失败: {res.get('message')}")
 
     async def _publish(
         self,
@@ -314,21 +319,27 @@ class QzonePlugin(Star):
 
     @filter.permission_type(filter.PermissionType.MEMBER)
     @filter.command("查看稿件")
-    async def view_post(self, event: AiocqhttpMessageEvent, post_id: int = -1):
+    async def view_post(self, event: AiocqhttpMessageEvent, input: str | int):
         "查看稿件 <稿件ID>, 默认最新稿件"
-        await self.campus_wall.view(event, post_id)
+        await self.campus_wall.view(event, input)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("通过稿件")
-    async def approve_post(self, event: AiocqhttpMessageEvent, post_id: int = -1):
-        """通过投稿 <稿件ID>"""
-        await self.campus_wall.approve(event, post_id)
+    async def approve_post(self, event: AiocqhttpMessageEvent, input: str | int):
+        """通过稿件 <稿件ID>"""
+        await self.campus_wall.approve(event, input)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("拒绝稿件")
-    async def reject_post(self, event: AiocqhttpMessageEvent, post_id: int = -1):
-        """拒绝投稿 <稿件ID> <原因>"""
-        await self.campus_wall.reject(event, post_id)
+    async def reject_post(self, event: AiocqhttpMessageEvent, input: str | int):
+        """拒绝稿件 <稿件ID> <原因>"""
+        await self.campus_wall.reject(event, input)
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("删除稿件")
+    async def delete_post(self, event: AiocqhttpMessageEvent, input: str | int):
+        """删除稿件 <稿件ID>"""
+        await self.campus_wall.delete(event, input)
 
     async def terminate(self):
         """插件卸载时"""

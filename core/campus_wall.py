@@ -1,4 +1,3 @@
-
 from astrbot.api import logger
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.message.components import BaseMessageComponent, Image, Plain
@@ -15,16 +14,11 @@ from .utils import get_image_urls
 
 class CampusWall:
     def __init__(
-        self,
-        context: Context,
-        config: AstrBotConfig,
-        qzone: Qzone,
-        db: PostDB,
-        style
+        self, context: Context, config: AstrBotConfig, qzone: Qzone, db: PostDB, style
     ):
         self.qzone = qzone
         self.db = db
-        self.style =style
+        self.style = style
         # 管理群ID，审批信息会发到此群
         self.manage_group: int = config.get("manage_group", 0)
         # 管理员QQ号列表，审批信息会私发给这些人
@@ -127,7 +121,6 @@ class CampusWall:
         await self.notice_admin(event, chain)
         event.stop_event()
 
-
     async def view(self, event: AiocqhttpMessageEvent, input: str | int):
         "查看稿件 <ID>, 默认最新稿件"
         for post_id in self.parse_input(input):
@@ -137,7 +130,6 @@ class CampusWall:
                 return
             img_path = await post.to_image(self.style)
             await event.send(event.image_result(img_path))
-
 
     async def approve(self, event: AiocqhttpMessageEvent, input: str | int):
         """通过稿件 <稿件ID>, 默认最新稿件"""
@@ -153,40 +145,39 @@ class CampusWall:
                 )
                 return
 
-        # 发布说说
-        res = await self.qzone.publish(post)
+            # 发布说说
+            res = await self.qzone.publish(post)
 
-        # 处理错误
-        if error := res.get("error"):
-            await event.send(event.plain_result(error))
-            logger.error(f"发布说说失败：{error}")
-            event.stop_event()
-            raise error
+            # 处理错误
+            if error := res.get("error"):
+                await event.send(event.plain_result(error))
+                logger.error(f"发布说说失败：{error}")
+                event.stop_event()
+                raise error
 
-        # 更新字段，存入数据库
-        post.tid = res["tid"]
-        post.create_time = res["now"]
-        post.status = "approved"
-        await post.save(self.db)
+            # 更新字段，存入数据库
+            post.tid = res["tid"]
+            post.create_time = res["now"]
+            post.status = "approved"
+            await post.save(self.db)
 
-        # 渲染图片
-        img_path = await post.to_image(self.style)
-        img_seg = Image.fromFileSystem(str(img_path))
+            # 渲染图片
+            img_path = await post.to_image(self.style)
+            img_seg = Image.fromFileSystem(str(img_path))
 
-        # 通知管理员
-        chain = [Plain(f"已发布说说#{post_id}"), img_seg]
-        await event.send(event.chain_result(chain))
+            # 通知管理员
+            chain = [Plain(f"已发布说说#{post_id}"), img_seg]
+            await event.send(event.chain_result(chain))
 
-        # 通知投稿者
-        chain = [Plain(f"您的投稿#{post_id}已通过"), img_seg]
-        await self.notice_user(
-            event,
-            chain=chain,
-            group_id=post.gin,
-            user_id=post.uin,
-        )
-        logger.info(f"已发布说说#{post_id}")
-
+            # 通知投稿者
+            chain = [Plain(f"您的投稿#{post_id}已通过"), img_seg]
+            await self.notice_user(
+                event,
+                chain=chain,
+                group_id=post.gin,
+                user_id=post.uin,
+            )
+            logger.info(f"已发布说说#{post_id}")
 
     async def reject(self, event: AiocqhttpMessageEvent, input: str | int):
         """拒绝稿件 <稿件ID> <原因>"""
@@ -197,7 +188,9 @@ class CampusWall:
                 return
 
             if post.status == "rejected":
-                await event.send(event.plain_result(f"稿件#{post_id}已拒绝，请勿重复拒绝"))
+                await event.send(
+                    event.plain_result(f"稿件#{post_id}已拒绝，请勿重复拒绝")
+                )
                 return
 
             if post.status == "approved":

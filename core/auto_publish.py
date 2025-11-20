@@ -67,10 +67,10 @@ class AutoPublish:
         # TODO: llm配图
         #images = await self.llm.generate_images(text, self.per_qzone_num)
         post = Post(text=text, status="approved")
-        res = await self.qzone.publish(post)
-        if error := res.get("error"):
-            logger.error(f"[AutoPublish] 发说说失败：{error}")
-            raise error
+        succ, data = await self.qzone.publish(post)
+        if not succ:
+            logger.error(f"[AutoPublish] 发说说失败：{data}")
+            return
 
     async def terminate(self):
         self.scheduler.remove_all_jobs()

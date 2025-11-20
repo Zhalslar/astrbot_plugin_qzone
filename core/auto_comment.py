@@ -26,7 +26,6 @@ class AutoComment:
         llm: LLMAction,
     ):
         self.qzone = qzone
-        self.friend_ids = [] # TODO:等待接口完善，取最近说说列表
         self.llm = llm
 
         self.per_qzone_num = config.get("per_qzone_num", 5)
@@ -63,44 +62,30 @@ class AutoComment:
     async def run_once(self):
         """执行一次完整的遍历 + 点赞 + 评论"""
         logger.info("[AutoComment] 开始自动遍历好友说说...")
-
-        if not self.friend_ids:
-            logger.warning("[AutoComment] 无好友，跳过")
+        succ, data = await self.qzone.get_recent_feeds()
+        if succ:
+            logger.error(f"获取说说失败：{data}")
             return
-
-        for uin in self.friend_ids:
+        posts: list[Post] = data # type: ignore
+        posts = [post for post in posts if post.uin != self.qzone.ctx.uin]
+        for post in posts:
             try:
-                await self.process_friend(uin)
+                await self.like_post(post)
+                await self.comment_post(post)
             except Exception as e:
-                logger.error(f"[AutoComment] 处理好友 {uin} 失败：{e}")
-                await asyncio.sleep(1)
+                logger.error(f"[AutoComment] 处理稿件 {post.tid} 失败：{e}")
+                continue
+            await asyncio.sleep(2)
 
         logger.info("[AutoComment] 本轮任务结束")
 
 
-    async def process_friend(self, uin: int):
-        """
-        获取好友最近说说，自动点赞 & 评论
-        """
-        res = await self.qzone.get_posts(
-            target_id=str(uin), pos=1, num=self.per_qzone_num
-        )
-        if error := res.get("error"):
-            logger.error(f"获取说说失败：{error}")
-            raise error
-        if posts := self.qzone.parse_posts(res):
-            for post in posts:
-                await self.like_post(post)
-                await self.comment_post(post)
-                await asyncio.sleep(1)
-
-
     async def like_post(self, post: Post):
         try:
-            res = await self.qzone.like(fid=post.tid, target_id=str(post.uin))
-            if error := res.get("error"):
-                logger.error(f"[AutoComment] 点赞失败: {error}")
-                raise error
+            succ, data = await self.qzone.like(fid=post.tid, target_id=str(post.uin))
+            if not succ:
+                logger.error(f"[AutoComment] 点赞失败: {data}")
+                return
             logger.info(f"[AutoComment] 已点赞: {post.name}({post.uin})/{post.tid} ")
         except Exception as e:
             logger.error(f"[AutoComment] 点赞异常: {e}")
@@ -110,14 +95,14 @@ class AutoComment:
         try:
             content = await self.llm.generate_comment(post)
 
-            res = await self.qzone.comment(
+            succ, data = await self.qzone.comment(
                 fid=post.tid,
                 target_id=str(post.uin),
                 content=content,
             )
-            if error := res.get("error"):
-                logger.error(f"[AutoComment] 评论失败: {error}")
-                raise error
+            if not succ:
+                logger.error(f"[AutoComment] 评论失败: {data}")
+                return
             logger.info(
                 f"[AutoComment] 已评论: {post.name}({post.uin})/{post.tid} -> {content}"
             )

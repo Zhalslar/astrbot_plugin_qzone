@@ -63,12 +63,11 @@ class QzonePlugin(Star):
         except Exception as e:
             logger.error(f"无法加载pillowmd样式：{e}")
 
-        # 加载、重载插件时登录QQ空间
         asyncio.create_task(self.initialize_qzone(False))
 
     @filter.on_platform_loaded()
     async def on_platform_loaded(self):
-        """平台加载完成时，登录QQ空间"""
+        """平台加载完成时"""
         asyncio.create_task(self.initialize_qzone(True))
 
     async def initialize_qzone(self, wait_ws_connected: bool = False):
@@ -93,7 +92,7 @@ class QzonePlugin(Star):
             except asyncio.TimeoutError:
                 logger.warning("等待 aiocqhttp WebSocket 连接超时")
 
-        # 登录QQ空间
+        # 加载QQ空间模块
         self.qzone = Qzone(client)
 
         # llm内容生成器
@@ -128,28 +127,24 @@ class QzonePlugin(Star):
     @filter.command("查看访客")
     async def visitor(self, event: AiocqhttpMessageEvent):
         """查看访客"""
-        res = await self.qzone.get_visitor()
-        if error := res.get("error"):
-            yield event.plain_result(error)
-            logger.error(f"查看访客失败：{error}")
+        succ, data = await self.qzone.get_visitor()
+        if not succ:
+            yield event.plain_result(data)
+            logger.error(f"查看访客失败：{data}")
             return
-        data = res.get("data")
         if not data:
             yield event.plain_result("无访客记录")
             return
-        text = self.qzone.parse_visitors(data)
-        img = await self.style.AioRender(text=text, useImageUrl=True, autoPage=True)
+        img = await self.style.AioRender(text=data, useImageUrl=True, autoPage=True)
         img_path = img.Save(self.cache)
         yield event.image_result(str(img_path))
 
-    async def _get_posts(
-        self, event: AiocqhttpMessageEvent, target_id: str = ""
-    ) -> list[Post]:
+    async def _get_posts(self, event: AiocqhttpMessageEvent, no_self: bool = False) -> list[Post]:
         """获取说说，返回稿件列表"""
         # 解析目标用户
-        if not target_id:
-            at_ids = get_ats(event)
-            target_id = at_ids[0] if at_ids else event.get_sender_id()
+        at_ids = get_ats(event)
+        target_id = at_ids[0] if at_ids else None
+        posts: list[Post] = []
 
         # 解析范围参数
         end_parm = event.message_str.split(" ")[-1]
@@ -164,33 +159,39 @@ class QzonePlugin(Star):
             index = 1
             num = 1
 
-        # 获取说说, pos为开始位置， num为获取数量
-        res: dict = await self.qzone.get_posts(target_id=target_id, pos=index, num=num)
+        if target_id:
+            # 获取说说, pos为开始位置， num为获取数量
+            succ, data = await self.qzone.get_feeds(target_id=target_id, pos=index, num=num)
+        else:
+            succ, data = await self.qzone.get_recent_feeds()
 
         # 处理错误
-        if error := res.get("error"):
-            await event.send(event.plain_result(error))
-            logger.error(f"获取说说失败：{error}")
+        if not succ:
+            await event.send(event.plain_result(str(data)))
+            logger.error(f"获取说说失败：{data}")
             event.stop_event()
-            raise error
-
-        # 解析结果
-        posts = self.qzone.parse_posts(res)
-        if not posts:
+            raise StopIteration
+        if not data:
             await event.send(event.plain_result("获取不到说说"))
             event.stop_event()
             raise StopIteration
+
+        posts = data # type: ignore
+
+        # 过滤自己的说说
+        if no_self:
+            posts = [post for post in posts if post.uin != self.qzone.ctx.uin]
 
         # 存到数据库
         for post in posts:
             await post.save(self.db)
 
-        return posts
+        return posts[:num]
 
     @filter.command("查看说说")
     async def view_qzone(self, event: AiocqhttpMessageEvent):
         """查看说说 <@群友> <序号>"""
-        posts = await self._get_posts(event)
+        posts: list[Post] = await self._get_posts(event)
         for post in posts:
             img_path = await post.to_image(self.style)
             yield event.image_result(img_path)
@@ -200,10 +201,10 @@ class QzonePlugin(Star):
         """点赞说说 <@群友> <序号>"""
         posts = await self._get_posts(event)
         for post in posts:
-            res = await self.qzone.like(fid=post.tid, target_id=str(post.uin))
-            if error := res.get("error"):
-                yield event.plain_result(error)
-                logger.error(f"点赞失败: {error}")
+            succ, data = await self.qzone.like(fid=post.tid, target_id=str(post.uin))
+            if not succ:
+                yield event.plain_result(str(data))
+                logger.error(f"点赞失败: {data}")
                 continue
             yield event.plain_result(f"已给{post.name}的说说点赞: {post.text[:10]}")
 
@@ -211,17 +212,17 @@ class QzonePlugin(Star):
     @filter.command("评论说说")
     async def comment(self, event: AiocqhttpMessageEvent):
         """评论说说 <@群友> <序号>"""
-        posts = await self._get_posts(event)
+        posts = await self._get_posts(event, no_self=True)
         for post in posts:
             content = await self.llm.generate_comment(post)
-            res = await self.qzone.comment(
+            succ, data = await self.qzone.comment(
                 fid=post.tid,
                 target_id=str(post.uin),
                 content=content,
             )
-            if error := res.get("error"):
-                yield event.plain_result(error)
-                logger.error(f"评论失败: {error}")
+            if not succ:
+                yield event.plain_result(str(data))
+                logger.error(f"评论失败: {data}")
                 continue
 
             # 同步评论到数据库
@@ -241,21 +242,16 @@ class QzonePlugin(Star):
             img_path = await post.to_image(self.style)
             yield event.image_result(img_path)
 
-    # @filter.command("测试")
-    # async def test(self, event: AiocqhttpMessageEvent):
-    #     await self.qzone.get_recent_posts()
-    #     event.stop_event()
-
     #@filter.command("删除说说") # 接口测试中
     async def delete_qzone(self, event: AiocqhttpMessageEvent):
         """删除说说 <序号>"""
-        posts = await self._get_posts(event=event, target_id=event.get_self_id())
+        posts = await self._get_posts(event)
         for post in posts:
-            res = await self.qzone.delete(post.tid)
-            if res.get("code") == 0:
+            succ, data = await self.qzone.delete(post.tid)
+            if succ:
                 yield event.plain_result(f"已删除{post.name}的说说: {post.text[:10]}")
             else:
-                yield event.plain_result(f"删除失败: {res.get('message')}")
+                yield event.plain_result(f"删除失败: {data['message']}")
 
     async def _publish(
         self,
@@ -275,15 +271,16 @@ class QzonePlugin(Star):
             status="pending",
         )
         if publish:
-            res = await self.qzone.publish(post)
-            if error := res.get("error"):
-                await event.send(event.plain_result(error))
-                logger.error(f"发布说说失败：{error}")
+            succ, data = await self.qzone.publish(post)
+            if not succ:
+                await event.send(event.plain_result(str(data)))
+                logger.error(f"发布说说失败：{str(data)}")
                 event.stop_event()
-                raise error
-            post.tid = res["tid"]
-            post.create_time = res["now"]
+                raise StopIteration
+            post.tid = data.get("tid", "")
             post.status = "approved"
+            if now:= data.get("now", ""):
+                post.create_time = now
 
         await post.save(self.db)
         img_path = await post.to_image(self.style)

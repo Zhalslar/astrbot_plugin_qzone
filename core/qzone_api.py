@@ -400,10 +400,11 @@ class Qzone:
         )
         return succ, self.parse_feeds(data) if succ else data["message"]
 
-    async def get_recent_feeds(self) -> tuple[bool, list[Post] | str]:
+    async def get_recent_feeds(self, page: int = 1) -> tuple[bool, list[Post] | str]:
         """
         获取自己的好友说说列表，返回已读与未读的说说列表
         """
+        page = 1 # 测试时发现暂时是无效配置，先设为1吧
         await self.ready()
         succ, data = await self._request(
             method="GET",
@@ -415,7 +416,7 @@ class Qzone:
                 "filter": "all",  # 全部动态
                 "flag": 1,  # 标记
                 "applist": "all",  # 所有应用
-                "pagenum": 1,  # 页码
+                "pagenum": page,  # 页码
                 "aisortEndTime": 0,  # AI排序结束时间
                 "aisortOffset": 0,  # AI排序偏移
                 "aisortBeginTime": 0,  # AI排序开始时间
@@ -640,7 +641,7 @@ class Qzone:
                         # 提取基本信息
                         qq_account = item.get("data-uin", "")
                         comment_tid = str(item.get("data-tid", ""))
-                        nickname = item.get("data-nick", "")
+                        nickname = str(item.get("data-nick", ""))
 
                         # 查找评论内容
                         content_div = item.select_one("div.comments-content")
@@ -649,7 +650,9 @@ class Qzone:
                             for op in content_div.select("div.comments-op"):
                                 op.decompose()
                             # 获取纯文本内容
-                            content = content_div.get_text(" ", strip=True)
+                            content = content_div.get_text(
+                                " ", strip=True
+                            ).split(":", 1)[-1]
                         else:
                             content = ""
 

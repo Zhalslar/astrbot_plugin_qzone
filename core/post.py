@@ -114,7 +114,7 @@ class Post(pydantic.BaseModel):
             lines.append("\n\n【评论区】\n")
             for comment in self.comments:
                 lines.append(
-                    f"- {comment['nickname']}: {remove_em_tags(extract_and_replace_nickname(comment['content']))}"
+                    f"- {remove_em_tags(comment['nickname'])}: {remove_em_tags(extract_and_replace_nickname(comment['content']))}"
                 )
         if is_pending:
             if self.anon:

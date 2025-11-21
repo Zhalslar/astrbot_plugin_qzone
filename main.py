@@ -163,7 +163,8 @@ class QzonePlugin(Star):
             # 获取说说, pos为开始位置， num为获取数量
             succ, data = await self.qzone.get_feeds(target_id=target_id, pos=index, num=num)
         else:
-            succ, data = await self.qzone.get_recent_feeds()
+            # 获取最新说说, page为查询第几页
+            succ, data = await self.qzone.get_recent_feeds(page=index)
 
         # 处理错误
         if not succ:
@@ -186,7 +187,7 @@ class QzonePlugin(Star):
         for post in posts:
             await post.save(self.db)
 
-        return posts[:num]
+        return posts
 
     @filter.command("查看说说")
     async def view_qzone(self, event: AiocqhttpMessageEvent):

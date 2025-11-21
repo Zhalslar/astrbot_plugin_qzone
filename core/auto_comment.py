@@ -28,7 +28,7 @@ class AutoComment:
         self.qzone = qzone
         self.llm = llm
 
-        self.per_qzone_num = config.get("per_qzone_num", 5)
+        self.recent_page = config.get("recent_page", 1)
 
         tz = context.get_config().get("timezone")
         self.timezone = (
@@ -62,20 +62,30 @@ class AutoComment:
     async def run_once(self):
         """执行一次完整的遍历 + 点赞 + 评论"""
         logger.info("[AutoComment] 开始自动遍历好友说说...")
-        succ, data = await self.qzone.get_recent_feeds()
-        if succ:
-            logger.error(f"获取说说失败：{data}")
-            return
-        posts: list[Post] = data # type: ignore
-        posts = [post for post in posts if post.uin != self.qzone.ctx.uin]
-        for post in posts:
-            try:
-                await self.like_post(post)
-                await self.comment_post(post)
-            except Exception as e:
-                logger.error(f"[AutoComment] 处理稿件 {post.tid} 失败：{e}")
-                continue
-            await asyncio.sleep(2)
+        for i in range(self.recent_page):
+            succ, data = await self.qzone.get_recent_feeds(page=i)
+            if succ:
+                logger.error(f"获取说说失败：{data}")
+                return
+            posts: list[Post] = data # type: ignore
+            for post in posts:
+                # 过滤自己的说说
+                if post.uin != self.qzone.ctx.uin:
+                    continue
+                # 过滤已评论过的
+                if any(
+                    comment.get("qq_account") == str(self.qzone.ctx.uin)
+                    for comment in post.comments
+                ):
+                    continue
+
+                try:
+                    await self.like_post(post)
+                    await self.comment_post(post)
+                except Exception as e:
+                    logger.error(f"[AutoComment] 处理稿件 {post.tid} 失败：{e}")
+                    continue
+                await asyncio.sleep(2)
 
         logger.info("[AutoComment] 本轮任务结束")
 

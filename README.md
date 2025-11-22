@@ -62,8 +62,6 @@ git clone https://github.com/Zhalslar/astrbot_plugin_qzone
 
 ### 效果图
 
-![257528e19908e70160afde6f0dd6b9d2](https://github.com/user-attachments/assets/7aa706c2-6c50-4740-b57b-e61b7a232adf)
-
 ## 💡 TODO
 
 - [x] 发说说
@@ -74,7 +72,7 @@ git clone https://github.com/Zhalslar/astrbot_plugin_qzone
 - [x] 定时自动评论、点赞好友的说说
 - [x] LLM发说说
 - [ ] LLM配图
-- [ ] 更丰富的说说主题
+- [ ] 自动上网冲浪写说说
 
 ## 👥 贡献指南
 

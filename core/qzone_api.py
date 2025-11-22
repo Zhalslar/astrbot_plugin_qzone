@@ -15,6 +15,7 @@ from aiocqhttp import CQHttp
 
 from astrbot.api import logger
 
+from .comment import Comment
 from .post import Post
 from .utils import normalize_images
 
@@ -40,6 +41,7 @@ class QzoneContext:
             "uin": f"o{self.uin}",
             "skey": self.skey,
             "p_skey": self.p_skey,
+            "p_uin": f"o{self.uin}"
         }
 
     def headers(self) -> dict[str, str]:
@@ -65,6 +67,7 @@ class Qzone:
     VISITOR_URL = "https://h5.qzone.qq.com/proxy/domain/g.qzone.qq.com/cgi-bin/friendshow/cgi_get_visitor_more"
     REPLY_URL = "https://h5.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_re_feeds"
     DELETE_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_delete_v6"
+    DETAIL_URL = "https://h5.qzone.qq.com/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_msgdetail_v6"
 
     def __init__(self, client: CQHttp) -> None:
         self._session = aiohttp.ClientSession(
@@ -111,7 +114,7 @@ class Qzone:
         debug: bool = False,
     ) -> tuple[bool, dict]:
         """aiohttp 包装"""
-        if retry_count > 3:  # 限制递归深度
+        if retry_count > 2:  # 限制递归深度
             raise RuntimeError("请求失败，重试次数过多")
 
         if method.upper() not in ["GET", "POST", "PUT", "DELETE"]:
@@ -158,7 +161,9 @@ class Qzone:
             # 重登机制
             code = parse_data.get("code")
             if resp.status in [401, 403] or code == -3000:
-                logger.warning("请求失败，状态码: -3000，正在尝试重新登录QQ空间...")
+                logger.warning(
+                    f"请求失败: {resp.status}，解析数据: {parse_data}, 正在尝试重新登录QQ空间..."
+                )
                 if not await self.login():
                     raise RuntimeError("重新登录失败，无法继续请求")
                 # ✅ 重新构造参数（此时 self.ctx 已更新）
@@ -353,6 +358,7 @@ class Qzone:
     async def delete(self, tid: str):
         """删除tid对应说说（接口暂时未接通）"""
         await self.ready()
+        referer = f"https://user.qzone.qq.com/{self.ctx.uin}/mood/{tid}"
         return await self._request(
             "POST",
             url=self.DELETE_URL,
@@ -360,11 +366,13 @@ class Qzone:
             data={
                 "tid": tid,
                 "hostUin": self.ctx.uin,
-                "qzreferrer": f"{self.BASE_URL}/{self.ctx.uin}",
+                "qzreferrer": referer,
                 "t1_source": 1,
                 "code_version": 1,
                 "format": "fs",
+                "p_skey": self.ctx.p_skey,
             },
+            headers={**self.ctx.headers(), "referer": referer},
         )
 
     async def get_feeds(
@@ -398,7 +406,39 @@ class Qzone:
                 "need_private_comment": 1,
             },
         )
-        return succ, self.parse_feeds(data) if succ else data["message"]
+        msglist = data.get("msglist", [])
+        return succ, self.parse_feeds(msglist) if succ else data[
+            "message"
+        ]
+
+    async def get_detail(self, post: Post) -> Post:
+        """
+        获取单条说说详情（含完整评论、转发、图片、视频等）
+
+        Args:
+            uin: 目标 QQ 号
+            tid: 说说 id（对应 msglist 里的 tid）
+
+        Returns:
+            (True, Post) 或 (False, 错误信息)
+        """
+        await self.ready()
+        succ, data = await self._request(
+            "GET",
+            self.DETAIL_URL,
+            params={
+                "uin": post.uin,
+                "tid": post.tid,
+                "format": "jsonp",
+                "g_tk": self.ctx.gtk2,
+            },
+        )
+        if succ:
+            if posts := self.parse_feeds([data]):
+                return posts[0]
+
+        logger.warning(f"获取说说详情失败：{data}")
+        return post
 
     async def get_recent_feeds(self, page: int = 1) -> tuple[bool, list[Post] | str]:
         """
@@ -487,90 +527,56 @@ class Qzone:
 
         return "\n".join(lines)
 
-    @staticmethod
-    def parse_comments(msg: dict) -> list[dict]:
-        """解析评论列表"""
-        comments = []
-        for comment in msg.get("commentlist") or []:
-            comment_time = comment.get("createTime", "") or comment.get("createTime2", "")
-
-            for sub_comment in comment.get("list_3") or []:
-                sub_content = sub_comment.get("content", "")
-                sub_nickname = sub_comment.get("name", "")
-                sub_uin = sub_comment.get("uin", "")
-                sub_tid_value = sub_comment.get("tid")
-                sub_time = sub_comment.get("createTime", "") or comment.get(
-                    "createTime2", ""
-                )
-                comments.append(
-                    {
-                        "content": sub_content,
-                        "qq_account": str(sub_uin),
-                        "nickname": sub_nickname,
-                        "comment_tid": sub_tid_value,
-                        "created_time": sub_time,
-                        "parent_tid": comment.get("tid"),
-                    }
-                )
-
-            comments.append(
-                {
-                    "content": comment.get("content", ""),
-                    "qq_account": comment.get("uin", ""),
-                    "nickname": comment.get("name", ""),
-                    "comment_tid": comment.get("tid"),
-                    "created_time": comment_time,
-                    "parent_tid": None,
-                }
-            )
-        return comments[::-1]
-
-    def parse_feeds(self, data: dict) -> list[Post]:
+    def parse_feeds(self, msglist: list[dict]) -> list[Post]:
         """解析说说列表"""
-        posts = []
-        msglist = data.get("msglist") or []
-        for msg in msglist:
-            logger.debug(msg)
-            # 提取图片信息
-            image_urls = []
-            for img_data in msg.get("pic", []):
-                for key in ("url2", "url3", "url1", "smallurl"):
-                    if raw := img_data.get(key):
-                        image_urls.append(raw)
-                        break
-            # 读取视频封面（按图片处理）
-            for video in msg.get("video") or []:
-                video_image_url = video.get("url1") or video.get("pic_url")
-                image_urls.append(video_image_url)
-            # 提取视频播放地址
-            video_urls = []
-            for video in msg.get("video") or []:
-                url = video.get("url3")
-                if url:
-                    video_urls.append(url)
-            # 提取转发内容
-            rt_con = msg.get("rt_con", {}).get("content", "")
-            # 提取评论
-            comments = self.parse_comments(msg)
-            # 构造Post对象
-            post = Post(
-                tid=msg.get("tid", 0),
-                uin=msg.get("uin", 0),
-                name=msg.get("name", ""),
-                gin=0,
-                text=msg.get("content", "").strip(),
-                images=image_urls,
-                videos=video_urls,
-                anon=False,
-                status="approved",
-                create_time=msg.get("created_time", 0),
-                rt_con=rt_con,
-                comments=comments,
-                extra_text=msg.get("source_name"),
-            )
-            posts.append(post)
+        try:
+            posts = []
+            for msg in msglist:
+                logger.debug(msg)
+                # 提取图片信息
+                image_urls = []
+                for img_data in msg.get("pic", []):
+                    for key in ("url2", "url3", "url1", "smallurl"):
+                        if raw := img_data.get(key):
+                            image_urls.append(raw)
+                            break
+                # 读取视频封面（按图片处理）
+                for video in msg.get("video") or []:
+                    video_image_url = video.get("url1") or video.get("pic_url")
+                    image_urls.append(video_image_url)
+                # 提取视频播放地址
+                video_urls = []
+                for video in msg.get("video") or []:
+                    url = video.get("url3")
+                    if url:
+                        video_urls.append(url)
+                # 提取转发内容
+                rt_con = msg.get("rt_con", {}).get("content", "")
+                # 提取评论
+                comments = Comment.build_list(msg.get("commentlist") or [])
+                # 构造Post对象
+                post = Post(
+                    tid=msg.get("tid", 0),
+                    uin=msg.get("uin", 0),
+                    name=msg.get("name", ""),
+                    gin=0,
+                    text=msg.get("content", "").strip(),
+                    images=image_urls,
+                    videos=video_urls,
+                    anon=False,
+                    status="approved",
+                    create_time=msg.get("created_time", 0),
+                    rt_con=rt_con,
+                    comments=comments,
+                    extra_text=msg.get("source_name"),
+                )
+                posts.append(post)
 
-        return posts
+            return posts
+
+        except Exception as e:
+            logger.error(f"解析说说列表失败: {e}")
+            return []
 
     @staticmethod
     def parse_recent_feeds(data: dict) -> list[Post]:
@@ -633,13 +639,13 @@ class Qzone:
                 if video_div and "url3" in video_div.attrs:
                     videos.append(video_div["url3"])
                 # 获取评论内容
-                comments = []
+                comments: list[Comment] = []
                 # 查找所有评论项（包括主评论和回复）
                 comment_items = soup.select("li.comments-item.bor3")
                 if comment_items:
                     for item in comment_items:
                         # 提取基本信息
-                        qq_account = item.get("data-uin", "")
+                        data_uin = str(item.get("data-uin", ""))
                         comment_tid = str(item.get("data-tid", ""))
                         nickname = str(item.get("data-nick", ""))
 
@@ -673,18 +679,17 @@ class Qzone:
                                 parent_tid = str(parent_li.get("data-tid"))  # type: ignore
 
                         comments.append(
-                            {
-                                "qq_account": str(qq_account),
-                                "nickname": nickname,
-                                "comment_tid": int(comment_tid)
-                                if comment_tid.isdigit()
-                                else 0,
-                                "content": content,
-                                "created_time": comment_time,  # 直接使用相对时间字符串
-                                "parent_tid": int(parent_tid)
+                            Comment(
+                                uin=int(data_uin) if data_uin.isdigit() else 0,
+                                nickname=nickname,
+                                content=content,
+                                create_time=0,
+                                create_time_str=comment_time,
+                                tid=int(comment_tid) if comment_tid.isdigit() else 0,
+                                parent_tid=int(parent_tid)
                                 if parent_tid and parent_tid.isdigit()
                                 else None,
-                            }
+                            )
                         )
                 # 构造Post对象
                 post = Post(

@@ -69,12 +69,13 @@ class AutoComment:
                 return
             posts: list[Post] = data # type: ignore
             for post in posts:
+                post = await self.qzone.get_detail(post)
                 # 过滤自己的说说
                 if post.uin != self.qzone.ctx.uin:
                     continue
                 # 过滤已评论过的
                 if any(
-                    comment.get("qq_account") == str(self.qzone.ctx.uin)
+                    comment.uin == self.qzone.ctx.uin
                     for comment in post.comments
                 ):
                     continue

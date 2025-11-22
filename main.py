@@ -1,6 +1,7 @@
 # main.py
 
 import asyncio
+import time
 from pathlib import Path
 
 import pillowmd
@@ -22,6 +23,7 @@ from astrbot.core.utils.version_comparator import VersionComparator
 from .core.auto_comment import AutoComment
 from .core.auto_publish import AutoPublish
 from .core.campus_wall import CampusWall
+from .core.comment import Comment
 from .core.llm_action import LLMAction
 from .core.post import Post, PostDB
 from .core.qzone_api import Qzone
@@ -46,7 +48,7 @@ class QzonePlugin(Star):
         self.pillowmd_style_dir = config.get("pillowmd_style_dir") or default_style_dir
 
         # 数据库文件
-        self.db_path = StarTools.get_data_dir("astrbot_plugin_qzone") / "posts_v2.db"
+        self.db_path = StarTools.get_data_dir("astrbot_plugin_qzone") / "posts_v3.db"
         # 缓存
         self.cache = StarTools.get_data_dir("astrbot_plugin_qzone") / "cache"
         self.cache.mkdir(parents=True, exist_ok=True)
@@ -139,11 +141,15 @@ class QzonePlugin(Star):
         img_path = img.Save(self.cache)
         yield event.image_result(str(img_path))
 
-    async def _get_posts(self, event: AiocqhttpMessageEvent, no_self: bool = False) -> list[Post]:
+    async def _get_posts(
+        self, event: AiocqhttpMessageEvent, no_self: bool = False, get_recent: bool = False
+    ) -> list[Post]:
         """获取说说，返回稿件列表"""
         # 解析目标用户
-        at_ids = get_ats(event)
-        target_id = at_ids[0] if at_ids else None
+        target_id = event.get_self_id()
+        if at_ids := get_ats(event):
+            target_id = at_ids[0]
+
         posts: list[Post] = []
 
         # 解析范围参数
@@ -159,12 +165,14 @@ class QzonePlugin(Star):
             index = 1
             num = 1
 
-        if target_id:
-            # 获取说说, pos为开始位置， num为获取数量
-            succ, data = await self.qzone.get_feeds(target_id=target_id, pos=index, num=num)
-        else:
+        if get_recent:
             # 获取最新说说, page为查询第几页
-            succ, data = await self.qzone.get_recent_feeds(page=index)
+            succ, data = await self.qzone.get_recent_feeds()
+        else:
+            # pos为开始位置， num为获取数量
+            succ, data = await self.qzone.get_feeds(
+                target_id=target_id, pos=index, num=num
+            )
 
         # 处理错误
         if not succ:
@@ -177,17 +185,29 @@ class QzonePlugin(Star):
             event.stop_event()
             raise StopIteration
 
-        posts = data # type: ignore
+        posts = data[index - 1 : index - 1 + num] if get_recent else data # type: ignore
 
         # 过滤自己的说说
         if no_self:
             posts = [post for post in posts if post.uin != self.qzone.ctx.uin]
+
+        # 获取单条说说的详情信息
+        if len(posts) == 1:
+            posts = [await self.qzone.get_detail(posts[0])]
 
         # 存到数据库
         for post in posts:
             await post.save(self.db)
 
         return posts
+
+    # @filter.command("测试")
+    # async def test(self, event: AiocqhttpMessageEvent):
+    #     """测试"""
+    #     posts: list[Post] = await self._get_posts(event)
+    #     for post in posts:
+    #         await self.qzone.get_detail(post)
+    #     yield event.plain_result("测试完成")
 
     @filter.command("查看说说")
     async def view_qzone(self, event: AiocqhttpMessageEvent):
@@ -213,7 +233,7 @@ class QzonePlugin(Star):
     @filter.command("评论说说")
     async def comment(self, event: AiocqhttpMessageEvent):
         """评论说说 <@群友> <序号>"""
-        posts = await self._get_posts(event, no_self=True)
+        posts = await self._get_posts(event)
         for post in posts:
             content = await self.llm.generate_comment(post)
             succ, data = await self.qzone.comment(
@@ -229,13 +249,14 @@ class QzonePlugin(Star):
             # 同步评论到数据库
             bot_id = event.get_self_id()
             bot_name = await get_nickname(event, bot_id)
-            comment = {
-                "content": content,
-                "qq_account": bot_id,
-                "nickname": bot_name,
-                "comment_tid": post.tid,
-                "created_time": post.create_time,
-            }
+            comment = Comment(
+                uin=int(bot_id),
+                nickname=bot_name,
+                content=content,
+                create_time=int(time.time()),  # 真实时间戳
+                tid=0,  # 楼中楼可再补
+                parent_tid=None,
+            )
             # 更新数据
             post.comments.append(comment)
             await post.save(self.db)
@@ -243,7 +264,74 @@ class QzonePlugin(Star):
             img_path = await post.to_image(self.style)
             yield event.image_result(img_path)
 
-    #@filter.command("删除说说") # 接口测试中
+    @filter.command("最近说说")
+    async def view_recent_qzone(self, event: AiocqhttpMessageEvent):
+        """查看最近说说 <序号/范围>"""
+        posts: list[Post] = await self._get_posts(event, get_recent=True)
+        for post in posts:
+            img_path = await post.to_image(self.style)
+            yield event.image_result(img_path)
+
+    @filter.command("读说说")
+    async def read_recent_qzone(self, event: AiocqhttpMessageEvent):
+        """读说说 <序号/范围> 点赞+评论最近说说"""
+        try:
+            posts: list[Post] = await self._get_posts(event, get_recent=True, no_self=True)
+        except Exception as e:
+            logger.exception("获取最近说说失败")
+            yield event.plain_result(f"获取说说列表失败：{e}")
+            return
+
+        yield event.plain_result(f"开始读最近的{len(posts)}条说说...")
+
+        like_succ = comment_succ = 0
+        bot_id = event.get_self_id()
+        bot_name = await get_nickname(event, bot_id)
+
+        for idx, post in enumerate(posts, 1):
+            # -------------- 点赞 --------------
+            try:
+                like_ok, _ = await self.qzone.like(fid=post.tid, target_id=str(post.uin))
+            except Exception as e:
+                logger.warning(f"[{idx}] 点赞异常：{e}")
+                like_ok = False
+            if like_ok:
+                like_succ += 1
+                logger.info(f"[{idx}] 点赞成功 → {post.name}")
+
+            # -------------- 评论 --------------
+            try:
+                content = await self.llm.generate_comment(post)
+                comment_ok, _ = await self.qzone.comment(
+                    fid=post.tid,
+                    target_id=str(post.uin),
+                    content=content,
+                )
+            except Exception as e:
+                logger.warning(f"[{idx}] 评论异常：{e}")
+                comment_ok = False
+            if comment_ok:
+                comment_succ += 1
+                # 落库
+                comment = Comment(
+                    uin=int(bot_id),
+                    nickname=bot_name,
+                    content=content,
+                    create_time=int(time.time()),
+                    tid=0,
+                    parent_tid=None,
+                )
+                post.comments.append(comment)
+                await post.save(self.db)
+                # 可视化
+                img_path = await post.to_image(self.style)
+                yield event.image_result(img_path)
+
+        yield event.plain_result(
+            f"读完了，赞了{like_succ}条，评了{comment_succ}条"
+        )
+
+    #@filter.command("删除说说")  # 接口测试中
     async def delete_qzone(self, event: AiocqhttpMessageEvent):
         """删除说说 <序号>"""
         posts = await self._get_posts(event)
@@ -253,6 +341,7 @@ class QzonePlugin(Star):
                 yield event.plain_result(f"已删除{post.name}的说说: {post.text[:10]}")
             else:
                 yield event.plain_result(f"删除失败: {data['message']}")
+
 
     async def _publish(
         self,
@@ -280,7 +369,7 @@ class QzonePlugin(Star):
                 raise StopIteration
             post.tid = data.get("tid", "")
             post.status = "approved"
-            if now:= data.get("now", ""):
+            if now := data.get("now", ""):
                 post.create_time = now
 
         await post.save(self.db)

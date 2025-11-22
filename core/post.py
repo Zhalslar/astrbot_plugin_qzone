@@ -11,6 +11,8 @@ import pydantic
 
 from astrbot.core.star.star_tools import StarTools
 
+from .comment import Comment
+
 post_key = typing.Literal[
     "id",
     "tid",
@@ -89,16 +91,19 @@ class Post(pydantic.BaseModel):
     """创建时间"""
     rt_con: str = ""
     """转发内容"""
-    comments: list[dict] = pydantic.Field(default_factory=list)
+    comments: list[Comment] = pydantic.Field(default_factory=list)
     """评论列表"""
     extra_text: str | None = None
     """额外文本"""
+
+    class Config:
+        json_encoders = {Comment: lambda c: c.model_dump()}
 
     def to_str(self) -> str:
         """把稿件信息整理成易读文本"""
         is_pending = self.status == "pending"
         lines = [
-            f"### {self.name}{'投稿' if is_pending else '发布'}于{datetime.fromtimestamp(self.create_time).strftime('%Y-%m-%d %H:%M')}"
+            f"### 【{self.id}】{self.name}{'投稿' if is_pending else '发布'}于{datetime.fromtimestamp(self.create_time).strftime('%Y-%m-%d %H:%M')}"
         ]
         if self.text:
             lines.append(f"\n\n{remove_em_tags(self.text)}\n\n")
@@ -114,7 +119,7 @@ class Post(pydantic.BaseModel):
             lines.append("\n\n【评论区】\n")
             for comment in self.comments:
                 lines.append(
-                    f"- {remove_em_tags(comment['nickname'])}: {remove_em_tags(extract_and_replace_nickname(comment['content']))}"
+                    f"- **{remove_em_tags(comment.nickname)}**: {remove_em_tags(extract_and_replace_nickname(comment.content))}"
                 )
         if is_pending:
             if self.anon:
@@ -198,7 +203,7 @@ class PostDB:
             status=row[9],
             create_time=row[10],
             rt_con=row[11],
-            comments=json.loads(row[12]),
+            comments=[Comment.model_validate(c) for c in json.loads(row[12])],
             extra_text=row[13],
         )
 
@@ -232,6 +237,7 @@ class PostDB:
     async def add(self, post: Post) -> int:
         """添加稿件"""
         async with aiosqlite.connect(self.db_path) as db:
+            comment_dicts = [c.model_dump() for c in post.comments]
             cur = await db.execute(
                 """
                 INSERT INTO posts (tid, uin, name, gin, text, images, videos, anon, status, create_time, rt_con, comments, extra_text)
@@ -249,7 +255,7 @@ class PostDB:
                     post.status,
                     post.create_time,
                     post.rt_con,
-                    json.dumps(post.comments, ensure_ascii=False),
+                    json.dumps(comment_dicts, ensure_ascii=False),
                     post.extra_text,
                 ),
             )
@@ -271,6 +277,7 @@ class PostDB:
 
     async def update(self, post: Post) -> None:
         async with aiosqlite.connect(self.db_path) as db:
+            comment_dicts = [c.model_dump() for c in post.comments]
             await db.execute(
                 """
                 UPDATE posts SET
@@ -291,7 +298,7 @@ class PostDB:
                     post.status,
                     post.create_time,
                     post.rt_con,
-                    json.dumps(post.comments, ensure_ascii=False),
+                    json.dumps(comment_dicts, ensure_ascii=False),
                     post.extra_text,
                     post.id,
                 ),

@@ -67,7 +67,7 @@ class Post(pydantic.BaseModel):
 
     id: int | None = None
     """稿件ID"""
-    tid: str = ""
+    tid: str | None = None
     """QQ给定的说说ID"""
     uin: int = 0
     """用户ID"""
@@ -146,23 +146,10 @@ class Post(pydantic.BaseModel):
                 raise AttributeError(f"Post 对象没有属性 {key}")
 
     async def save(self, db: "PostDB") -> int:
-        # tid 已经补上时 → 优先按 tid 覆盖，而不是 id
-        if self.tid and self.tid.strip():
-            old = await db.get(key="tid", value=self.tid)
-            if old:
-                # 把已有记录的 id 继承过来
-                self.id = old.id
-                await db.update(self)
-                return self.id # type: ignore
-
-        # 如果 self.id 为空 → 执行 INSERT
-        if self.id is None:
-            new_id = await db.add(self)
-            self.id = new_id
-            return new_id
-
-        # 正常 UPDATE
-        await db.update(self)
+        if self.id is None:          # 新记录
+            self.id = await db.add(self)
+            return self.id
+        await db.update(self)        # 已有记录
         return self.id
 
 
@@ -217,7 +204,7 @@ class PostDB:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS posts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    tid TEXT NOT NULL UNIQUE,
+                    tid TEXT UNIQUE,
                     uin INTEGER NOT NULL,
                     name TEXT NOT NULL,
                     gin INTEGER NOT NULL,
@@ -244,7 +231,7 @@ class PostDB:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    post.tid,
+                    post.tid or None,
                     post.uin,
                     post.name,
                     post.gin,
@@ -268,7 +255,8 @@ class PostDB:
         """根据指定字段查询一条稿件记录，默认按 id 查询"""
         if value is None:
             raise ValueError("必须提供查询值")
-
+        if key not in PostDB.ALLOWED_QUERY_KEYS:
+            raise ValueError(f"不允许的查询字段: {key}")
         async with aiosqlite.connect(self.db_path) as db:
             query = f"SELECT * FROM posts WHERE {key} = ? LIMIT 1"
             async with db.execute(query, (value,)) as cursor:
@@ -287,7 +275,7 @@ class PostDB:
                 WHERE id = ?
                 """,
                 (
-                    post.tid,
+                    post.tid or None,
                     post.uin,
                     post.name,
                     post.gin,

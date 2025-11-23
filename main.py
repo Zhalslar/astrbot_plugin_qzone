@@ -146,7 +146,7 @@ class QzonePlugin(Star):
         if not data:
             await event.send(event.plain_result("无访客记录"))
             return
-        img = await self.style.AioRender(text=data, useImageUrl=True, autoPage=True)
+        img = await self.style.AioRender(text=data, useImageUrl=True)
         img_path = img.Save(self.cache)
         await event.send(event.image_result(str(img_path)))
 

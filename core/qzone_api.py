@@ -212,7 +212,7 @@ class Qzone:
             raise RuntimeError("图片上传失败")
         return data
 
-    async def get_visitor(self) -> str:
+    async def get_visitor(self) -> tuple[bool, str]:
         """获取访客数"""
         await self.ready()
         succ, data = await self._request(
@@ -227,7 +227,7 @@ class Qzone:
                 "clear": 1,
             },
         )
-        return self.parse_visitors(data) if succ else str(data)
+        return succ, self.parse_visitors(data) if succ else str(data)
 
     @staticmethod
     def parse_upload_result(payload: dict[str, Any]) -> tuple[str, str]:
@@ -475,8 +475,8 @@ class Qzone:
         lines = []
 
         # 1. 统计摘要
-        lines.append(f"📊 今日访客：{data.get('todaycount', 0)} 人")
-        lines.append(f"📈 最近 30 天访客：{data.get('totalcount', 0)} 人")
+        lines.append(f"今日访客：{data.get('todaycount', 0)} 人")
+        lines.append(f"最近 30 天访客：{data.get('totalcount', 0)} 人")
         lines.append("")
 
         # 2. 逐条访客
@@ -485,7 +485,7 @@ class Qzone:
             lines.append("暂无访客记录")
             return "\n".join(lines)
 
-        lines.append("👀 最近来访明细：")
+        lines.append("最近来访明细：")
         for idx, v in enumerate(items, 1):
             # 基本信息
             name = v.get("name", "匿名")

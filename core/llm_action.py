@@ -57,6 +57,16 @@ class LLMAction:
             contexts.extend(self._build_context(round_messages))
         return contexts
 
+    @staticmethod
+    def extract_content(diary: str) -> str:
+        start_marker = '"""'
+        end_marker = '"""'
+        start = diary.find(start_marker) + len(start_marker)
+        end = diary.find(end_marker, start)
+        if start != -1 and end != -1:
+            return diary[start:end].strip()
+        return ""
+
     async def generate_diary(self, group_id: str = "", topic: str | None = None) -> str:
         """根据聊天记录生成日记"""
         get_using = self.context.get_using_provider()
@@ -74,9 +84,23 @@ class LLMAction:
         # TODO: 更多模式
 
         system_prompt = (
-            f"# 写作主题：{topic}\n\n" + self.config["diary_prompt"]
+            f"# 写作主题：{topic}\n\n"
+            "请按照以下格式输出内容：\n"
+            "- 直接进入正文，避免前言或无关内容。\n"
+            "- 使用清晰的标题和子标题。\n"
+            "- 每个段落聚焦一个主题。\n"
+            "- 在段落末尾提供简短的总结。\n"
+            + self.config["diary_prompt"]
             if topic
             else self.config["diary_prompt"]
+        )
+
+        # 系统提示，要求使用三对双引号包裹正文
+        system_prompt = (
+            f"# 写作主题：{topic or '从聊天内容中选一个主题'}\n\n"
+            "# 输出格式要求：\n"
+            '- 使用三对双引号（"""）将正文内容包裹起来。\n\n'
+            + self.config["diary_prompt"]
         )
 
         logger.debug(f"{system_prompt}\n\n{contexts}")
@@ -86,7 +110,7 @@ class LLMAction:
                 system_prompt=system_prompt,
                 contexts=contexts,
             )
-            diary = llm_response.completion_text
+            diary = self.extract_content(llm_response.completion_text)
             logger.info(f"LLM 生成的日记：{diary}")
             return diary
 

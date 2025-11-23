@@ -33,6 +33,7 @@ from .core.utils import get_image_urls
 class QzonePlugin(Star):
     # 数据库版本
     DB_VERSION = 4
+
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.context = context
@@ -50,7 +51,8 @@ class QzonePlugin(Star):
 
         # 数据库文件
         self.db_path: Path = (
-            StarTools.get_data_dir("astrbot_plugin_qzone") / f"posts_{self.DB_VERSION}.db"
+            StarTools.get_data_dir("astrbot_plugin_qzone")
+            / f"posts_{self.DB_VERSION}.db"
         )
         # 缓存
         self.cache: Path = StarTools.get_data_dir("astrbot_plugin_qzone") / "cache"
@@ -104,7 +106,9 @@ class QzonePlugin(Star):
         self.llm = LLMAction(self.context, self.config, client)
 
         # 加载稿件操作模块
-        self.operator = PostOperator(self.qzone, self.db, self.llm, self.style)
+        self.operator = PostOperator(
+            self.config, self.qzone, self.db, self.llm, self.style
+        )
 
         # 加载自动评论模块
         if self.config.get("comment_cron"):
@@ -130,7 +134,6 @@ class QzonePlugin(Star):
         )
         logger.info("表白墙模块加载完毕！")
 
-
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("查看访客")
     async def visitor(self, event: AiocqhttpMessageEvent):
@@ -147,11 +150,13 @@ class QzonePlugin(Star):
         img_path = img.Save(self.cache)
         await event.send(event.image_result(str(img_path)))
 
-
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     async def prob_read_feed(self, event: AiocqhttpMessageEvent):
         """按概率触发点赞+评论"""
-        if random.random() < self.config["read_prob"]:
+        if (
+            random.random() < self.config["read_prob"]
+            and event.get_sender_id() not in self.config["ignore_users"]
+        ):
             await self.operator.read_feed(event, get_recent=False, get_sender=True)
 
     @filter.command("看说说", alias={"查看说说"})
@@ -188,7 +193,9 @@ class QzonePlugin(Star):
 
     @filter.permission_type(filter.PermissionType.MEMBER)
     @filter.command("看稿", alias={"查看稿件"})
-    async def view_post(self, event: AiocqhttpMessageEvent, input: str | int| None = None):
+    async def view_post(
+        self, event: AiocqhttpMessageEvent, input: str | int | None = None
+    ):
         "查看稿件 <稿件ID>, 默认最新稿件"
         await self.campus_wall.view(event, input)
 

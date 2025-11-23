@@ -14,6 +14,7 @@ import json5
 from aiocqhttp import CQHttp
 
 from astrbot.api import logger
+from astrbot.core.config.astrbot_config import AstrBotConfig
 
 from .comment import Comment
 from .post import Post
@@ -375,7 +376,7 @@ class Qzone:
 
     async def get_feeds(
         self, target_id: str, pos: int = 1, num: int = 1
-    ) -> tuple[bool, list[Post] | str]:
+    ) -> tuple[bool, list[Post] | dict]:
         """
         获取指定QQ号的好友说说列表
 
@@ -404,8 +405,9 @@ class Qzone:
                 "need_private_comment": 1,
             },
         )
-        msglist = data.get("msglist", [])
-        return succ, self.parse_feeds(msglist) if succ else data["message"]
+        if msglist := data.get("msglist"):
+            return True, self.parse_feeds(msglist)
+        return False, data
 
     async def get_detail(self, post: Post) -> Post:
         """
@@ -429,14 +431,14 @@ class Qzone:
                 "g_tk": self.ctx.gtk2,
             },
         )
-        if succ:
+        if succ and data:
             if posts := self.parse_feeds([data]):
                 return posts[0]
 
         logger.warning(f"获取说说详情失败：{data}")
         return post
 
-    async def get_recent_feeds(self, page: int = 1) -> tuple[bool, list[Post] | str]:
+    async def get_recent_feeds(self, page: int = 1) -> tuple[bool, list[Post] | dict]:
         """
         获取自己的好友说说列表，返回已读与未读的说说列表
         """
@@ -463,7 +465,7 @@ class Qzone:
                 "outputhtmlfeed": 1,  # 输出HTML格式
             },
         )
-        return succ, self.parse_recent_feeds(data) if succ else data["message"]
+        return succ, self.parse_recent_feeds(data) if succ else data
 
     @staticmethod
     def parse_visitors(data: dict) -> str:

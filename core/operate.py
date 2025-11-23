@@ -1,7 +1,7 @@
-
 import time
 
 from astrbot.api import logger
+from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
@@ -14,7 +14,10 @@ from .utils import get_ats, get_nickname
 
 
 class PostOperator:
-    def __init__(self, qzone: Qzone, db: PostDB,llm: LLMAction, style):
+    def __init__(
+        self, config: AstrBotConfig, qzone: Qzone, db: PostDB, llm: LLMAction, style
+    ):
+        self.config = config
         self.qzone = qzone
         self.db = db
         self.llm = llm
@@ -48,6 +51,10 @@ class PostOperator:
             logger.error("获取不到用户ID")
             return []
 
+        if target_id in self.config["ignore_users"]:  # 忽略用户
+            logger.warning(f"已忽略用户（{target_id}）的QQ空间")
+            return []
+
         posts: list[Post] = []
 
         # 解析范围参数
@@ -75,18 +82,19 @@ class PostOperator:
         # 处理错误
         if not succ:
             logger.error(f"获取说说失败：{data}")
-            if event:
-                await event.send(event.plain_result(str(data)))
+            if event and isinstance(data, dict):
+                if code := data.get("code"):
+                    if code in [-10031]:
+                        self.config["ignore_users"].append(target_id)
+                        logger.warning(f"已将用户（{target_id}）添加到忽略列表，下次不再处理该用户的空间")
+                        self.config.save_config()
+                await event.send(
+                    event.plain_result(data.get("message") or "获取不到说说")
+                )
                 event.stop_event()
-            raise StopIteration
-        if not data:
-            logger.error("获取不到说说")
-            if event:
-                await event.send(event.plain_result("获取不到说说"))
-                event.stop_event()
-            raise StopIteration
+            return []
 
-        posts = data[index - 1 : index - 1 + num] if get_recent else data # type: ignore
+        posts = data[index - 1 : index - 1 + num] if get_recent else data  # type: ignore
 
         # 过滤自己的说说
         self.uin = str(self.qzone.ctx.uin)
@@ -114,7 +122,6 @@ class PostOperator:
 
         return posts
 
-
     async def view_feed(self, event: AiocqhttpMessageEvent, get_recent: bool = True):
         """
         查看说说 <序号/范围>
@@ -126,7 +133,6 @@ class PostOperator:
         for post in posts:
             img_path = await post.to_image(self.style)
             await event.send(event.image_result(img_path))
-
 
     async def read_feed(
         self,
@@ -146,7 +152,9 @@ class PostOperator:
         posts: list[Post] = await self._pipeline(
             event, get_recent, get_sender, no_self, no_commented
         )
-        bot_name = await get_nickname(event, event.get_self_id()) if event else self.name
+        bot_name = (
+            await get_nickname(event, event.get_self_id()) if event else self.name
+        )
 
         logger.info(f"开始执行读说说任务, 共 {len(posts)} 条")
 
@@ -157,7 +165,9 @@ class PostOperator:
                 continue
             # -------------- 点赞 --------------
             try:
-                like_ok, _ = await self.qzone.like(tid=post.tid, target_id=str(post.uin))
+                like_ok, _ = await self.qzone.like(
+                    tid=post.tid, target_id=str(post.uin)
+                )
             except Exception as e:
                 logger.warning(f"[{idx}] 点赞异常：{e}")
                 like_ok = False

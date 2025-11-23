@@ -105,26 +105,28 @@ class PostOperator:
         if no_self:
             posts = [post for post in posts if str(post.uin) != self.uin]
 
-        # 过滤已评论过的说说
         final_posts: list[Post] = []
         for post in posts:
             if no_commented:
+                # 过滤已评论过的说说
                 detail = await self.qzone.get_detail(post)
                 if any(str(c.uin) == self.uin for c in detail.comments):
                     continue
                 final_posts.append(detail)
+            elif len(posts) == 1:
+                # 单条说说则获取详情
+                detail = await self.qzone.get_detail(post)
+                final_posts.append(detail)
             else:
+                # 多条说说则只获取基本信息
                 final_posts.append(post)
 
-        # 如果只剩一条且不是详情对象，再补一次详情
-        if len(final_posts) == 1:
-            final_posts[0] = await self.qzone.get_detail(final_posts[0])
 
         # 存到数据库
-        for post in posts:
-            await post.save(self.db)
+        for p in final_posts:
+            await p.save(self.db)
 
-        return posts
+        return final_posts
 
     async def view_feed(self, event: AiocqhttpMessageEvent, get_recent: bool = True):
         """

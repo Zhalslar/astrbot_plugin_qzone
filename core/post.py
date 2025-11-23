@@ -107,14 +107,14 @@ class Post(pydantic.BaseModel):
         ]
         if self.text:
             lines.append(f"\n\n{remove_em_tags(self.text)}\n\n")
+        if self.rt_con:
+            lines.append(f"\n\n[转发]：{remove_em_tags(self.rt_con)}\n\n")
         if self.images:
             images_str = "\n".join(f"  ![图片]({img})" for img in self.images)
             lines.append(images_str)
         if self.videos:
             videos_str = "\n".join(f"  [视频]({vid})" for vid in self.videos)
             lines.append(videos_str)
-        if self.rt_con:
-            lines.append(f"  转发：{remove_em_tags(self.rt_con)}")
         if self.comments:
             lines.append("\n\n【评论区】\n")
             for comment in self.comments:
@@ -146,10 +146,19 @@ class Post(pydantic.BaseModel):
                 raise AttributeError(f"Post 对象没有属性 {key}")
 
     async def save(self, db: "PostDB") -> int:
-        if self.id is None:          # 新记录
-            self.id = await db.add(self)
+        # 1. tid 已存在 → 更新
+        if self.tid and self.tid.strip():
+            old = await db.get(key="tid", value=self.tid)
+            if old:
+                self.id = old.id
+
+        # 2. 已有 id → 更新
+        if self.id is not None:
+            await db.update(self)
             return self.id
-        await db.update(self)        # 已有记录
+
+        # 3. 新记录 → 插入
+        self.id = await db.add(self)
         return self.id
 
 
@@ -252,12 +261,22 @@ class PostDB:
             return last_id
 
     async def get(self, value, key: post_key = "id") -> Post | None:
-        """根据指定字段查询一条稿件记录，默认按 id 查询"""
+        """
+        根据指定字段查询一条稿件记录，默认按 id 查询。
+        当 key=='id' 且 value==-1 时，返回 id 最大的那一条记录。
+        """
         if value is None:
             raise ValueError("必须提供查询值")
         if key not in PostDB.ALLOWED_QUERY_KEYS:
             raise ValueError(f"不允许的查询字段: {key}")
         async with aiosqlite.connect(self.db_path) as db:
+            # 关键判断：-1 代表取最大 ID
+            if key == "id" and value == -1:
+                query = "SELECT * FROM posts ORDER BY id DESC LIMIT 1"
+                async with db.execute(query) as cursor:
+                    row = await cursor.fetchone()
+                    return self._row_to_post(row) if row else None
+            # 普通查询保持原逻辑
             query = f"SELECT * FROM posts WHERE {key} = ? LIMIT 1"
             async with db.execute(query, (value,)) as cursor:
                 row = await cursor.fetchone()

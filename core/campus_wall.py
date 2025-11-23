@@ -79,7 +79,7 @@ class CampusWall:
             await send_to_user()
 
     @staticmethod
-    def parse_input(input: str | int) -> list[int]:
+    def parse_input(input: str | int | None = None) -> list[int]:
         """解析 post_id 输入，支持单个 ID 或范围如 2~4"""
         post_ids = []
         if "~" in str(input):
@@ -90,6 +90,8 @@ class CampusWall:
                 raise ValueError("范围格式错误，应为如：2~4")
         elif isinstance(input, int):
             post_ids = [input]
+        else:
+            post_ids = [-1]
         return post_ids
 
     async def contribute(self, event: AiocqhttpMessageEvent):
@@ -121,7 +123,7 @@ class CampusWall:
         await self.notice_admin(event, chain)
         event.stop_event()
 
-    async def view(self, event: AiocqhttpMessageEvent, input: str | int):
+    async def view(self, event: AiocqhttpMessageEvent, input: str | int | None = None):
         "查看稿件 <ID>, 默认最新稿件"
         for post_id in self.parse_input(input):
             post = await self.db.get(post_id)
@@ -131,7 +133,9 @@ class CampusWall:
             img_path = await post.to_image(self.style)
             await event.send(event.image_result(img_path))
 
-    async def approve(self, event: AiocqhttpMessageEvent, input: str | int):
+    async def approve(
+        self, event: AiocqhttpMessageEvent, input: str | int | None = None
+    ):
         """通过稿件 <稿件ID>, 默认最新稿件"""
         for post_id in self.parse_input(input):
             post = await self.db.get(post_id)
@@ -146,18 +150,18 @@ class CampusWall:
                 return
 
             # 发布说说
-            res = await self.qzone.publish(post)
+            succ, data = await self.qzone.publish(post)
 
             # 处理错误
-            if error := res.get("error"):
-                await event.send(event.plain_result(error))
-                logger.error(f"发布说说失败：{error}")
+            if not succ:
+                await event.send(event.plain_result(str(data)))
+                logger.error(f"发布说说失败：{data}")
                 event.stop_event()
-                raise error
+                raise StopIteration
 
             # 更新字段，存入数据库
-            post.tid = res["tid"]
-            post.create_time = res["now"]
+            post.tid = data.get("tid")
+            post.create_time = data.get("now", 0)
             post.status = "approved"
             await post.save(self.db)
 
@@ -170,16 +174,19 @@ class CampusWall:
             await event.send(event.chain_result(chain))
 
             # 通知投稿者
-            chain = [Plain(f"您的投稿#{post_id}已通过"), img_seg]
-            await self.notice_user(
-                event,
-                chain=chain,
-                group_id=post.gin,
-                user_id=post.uin,
-            )
-            logger.info(f"已发布说说#{post_id}")
+            if str(post.uin) != event.get_self_id():
+                chain = [Plain(f"您的投稿#{post_id}已通过"), img_seg]
+                await self.notice_user(
+                    event,
+                    chain=chain,
+                    group_id=post.gin,
+                    user_id=post.uin,
+                )
+                logger.info(f"已发布说说#{post_id}")
 
-    async def reject(self, event: AiocqhttpMessageEvent, input: str | int):
+    async def reject(
+        self, event: AiocqhttpMessageEvent, input: str | int | None = None
+    ):
         """拒绝稿件 <稿件ID> <原因>"""
         for post_id in self.parse_input(input):
             post = await self.db.get(post_id)
@@ -212,17 +219,20 @@ class CampusWall:
             await event.send(event.plain_result(admin_msg))
 
             # 通知投稿者
-            user_msg = f"您的投稿#{post_id}未通过"
-            if reason:
-                user_msg += f"\n理由：{reason}"
-            await self.notice_user(
-                event,
-                chain=[Plain(user_msg)],
-                group_id=post.gin,
-                user_id=post.uin,
-            )
+            if str(post.uin) != event.get_self_id():
+                user_msg = f"您的投稿#{post_id}未通过"
+                if reason:
+                    user_msg += f"\n理由：{reason}"
+                await self.notice_user(
+                    event,
+                    chain=[Plain(user_msg)],
+                    group_id=post.gin,
+                    user_id=post.uin,
+                )
 
-    async def delete(self, event: AiocqhttpMessageEvent, input: str | int):
+    async def delete(
+        self, event: AiocqhttpMessageEvent, input: str | int | None = None
+    ):
         """删除稿件 <稿件ID>"""
         for post_id in self.parse_input(input):
             post = await self.db.get(post_id)

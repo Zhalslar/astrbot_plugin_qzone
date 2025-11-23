@@ -41,7 +41,6 @@ class QzoneContext:
             "uin": f"o{self.uin}",
             "skey": self.skey,
             "p_skey": self.p_skey,
-            "p_uin": f"o{self.uin}"
         }
 
     def headers(self) -> dict[str, str]:
@@ -128,7 +127,7 @@ class Qzone:
             data=data,
             headers=headers or self.ctx.headers(),
             cookies=self.ctx.cookies(),
-            timeout=aiohttp.ClientTimeout(total=timeout)
+            timeout=aiohttp.ClientTimeout(total=timeout),
         ) as resp:
             # 状态码处理
             if resp.status not in [200, 401, 403]:
@@ -289,8 +288,7 @@ class Qzone:
             data=post_data,
         )
 
-
-    async def like(self, fid: str, target_id: str) -> tuple[bool, dict]:
+    async def like(self, tid: str, target_id: str) -> tuple[bool, dict]:
         """
         点赞指定说说。
 
@@ -309,13 +307,13 @@ class Qzone:
             data={
                 "qzreferrer": f"{self.BASE_URL}/{self.ctx.uin}",  # 来源
                 "opuin": self.ctx.uin,  # 操作者QQ
-                "unikey": f"{self.BASE_URL}/{target_id}/mood/{fid}",  # 动态唯一标识
-                "curkey": f"{self.BASE_URL}/{target_id}/mood/{fid}",  # 要操作的动态对象
+                "unikey": f"{self.BASE_URL}/{target_id}/mood/{tid}",  # 动态唯一标识
+                "curkey": f"{self.BASE_URL}/{target_id}/mood/{tid}",  # 要操作的动态对象
                 "appid": 311,  # 应用ID(说说:311)
                 "from": 1,  # 来源
                 "typeid": 0,  # 类型ID
                 "abstime": int(time.time()),  # 当前时间戳
-                "fid": fid,  # 动态ID
+                "fid": tid,  # 动态ID
                 "active": 0,  # 活动ID
                 "format": "json",  # 返回格式
                 "fupdate": 1,  # 更新标记
@@ -407,9 +405,7 @@ class Qzone:
             },
         )
         msglist = data.get("msglist", [])
-        return succ, self.parse_feeds(msglist) if succ else data[
-            "message"
-        ]
+        return succ, self.parse_feeds(msglist) if succ else data["message"]
 
     async def get_detail(self, post: Post) -> Post:
         """
@@ -444,7 +440,7 @@ class Qzone:
         """
         获取自己的好友说说列表，返回已读与未读的说说列表
         """
-        page = 1 # 测试时发现暂时是无效配置，先设为1吧
+        page = 1  # 测试时发现暂时是无效配置，先设为1吧
         await self.ready()
         succ, data = await self._request(
             method="GET",
@@ -656,9 +652,9 @@ class Qzone:
                             for op in content_div.select("div.comments-op"):
                                 op.decompose()
                             # 获取纯文本内容
-                            content = content_div.get_text(
-                                " ", strip=True
-                            ).split(":", 1)[-1]
+                            content = content_div.get_text(" ", strip=True).split(
+                                ":", 1
+                            )[-1]
                         else:
                             content = ""
 
@@ -674,7 +670,9 @@ class Qzone:
                         parent_tid = None
                         parent_div = item.find_parent("div", class_="mod-comments-sub")
                         if parent_div:
-                            parent_li = parent_div.find_parent("li", class_="comments-item")
+                            parent_li = parent_div.find_parent(
+                                "li", class_="comments-item"
+                            )
                             if parent_li:
                                 parent_tid = str(parent_li.get("data-tid"))  # type: ignore
 
@@ -713,5 +711,3 @@ class Qzone:
 
     async def terminate(self) -> None:
         await self._session.close()
-
-

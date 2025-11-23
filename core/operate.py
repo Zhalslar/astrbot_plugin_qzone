@@ -87,7 +87,9 @@ class PostOperator:
                 if code := data.get("code"):
                     if code in [-10031]:
                         self.config["ignore_users"].append(target_id)
-                        logger.warning(f"已将用户（{target_id}）添加到忽略列表，下次不再处理该用户的空间")
+                        logger.warning(
+                            f"已将用户（{target_id}）添加到忽略列表，下次不再处理该用户的空间"
+                        )
                         self.config.save_config()
                 if event and send_error:
                     await event.send(
@@ -115,7 +117,7 @@ class PostOperator:
                 final_posts.append(post)
 
         # 如果只剩一条且不是详情对象，再补一次详情
-        if len(final_posts) == 1 and not final_posts[0].comments:
+        if len(final_posts) == 1:
             final_posts[0] = await self.qzone.get_detail(final_posts[0])
 
         # 存到数据库

@@ -33,6 +33,7 @@ class PostOperator:
         get_sender: bool = False,
         no_self: bool = False,
         no_commented: bool = False,
+        send_error: bool = True,
     ) -> list[Post]:
         """
         管道：取说说 → 解析参数 → 过滤 → 补详情 → 落库
@@ -82,16 +83,17 @@ class PostOperator:
         # 处理错误
         if not succ:
             logger.error(f"获取说说失败：{data}")
-            if event and isinstance(data, dict):
+            if isinstance(data, dict):
                 if code := data.get("code"):
                     if code in [-10031]:
                         self.config["ignore_users"].append(target_id)
                         logger.warning(f"已将用户（{target_id}）添加到忽略列表，下次不再处理该用户的空间")
                         self.config.save_config()
-                await event.send(
-                    event.plain_result(data.get("message") or "获取不到说说")
-                )
-                event.stop_event()
+                if event and send_error:
+                    await event.send(
+                        event.plain_result(data.get("message") or "获取不到说说")
+                    )
+                    event.stop_event()
             return []
 
         posts = data[index - 1 : index - 1 + num] if get_recent else data  # type: ignore
@@ -141,6 +143,7 @@ class PostOperator:
         get_sender: bool = False,
         no_self=True,
         no_commented=True,
+        send_error: bool = True,
     ):
         """
         读说说 <序号/范围> 即点赞+评论说说
@@ -150,7 +153,7 @@ class PostOperator:
             send_msg (bool, optional): 是否发送消息. Defaults to True.
         """
         posts: list[Post] = await self._pipeline(
-            event, get_recent, get_sender, no_self, no_commented
+            event, get_recent, get_sender, no_self, no_commented, send_error
         )
         bot_name = (
             await get_nickname(event, event.get_self_id()) if event else self.name

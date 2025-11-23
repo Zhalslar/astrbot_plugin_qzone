@@ -157,7 +157,7 @@ class QzonePlugin(Star):
             random.random() < self.config["read_prob"]
             and event.get_sender_id() not in self.config["ignore_users"]
         ):
-            await self.operator.read_feed(event, get_recent=False, get_sender=True)
+            await self.operator.read_feed(event, get_recent=False, get_sender=True, send_error=False)
 
     @filter.command("看说说", alias={"查看说说"})
     async def view_feed(self, event: AiocqhttpMessageEvent, at: str | None = None):

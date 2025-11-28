@@ -200,7 +200,7 @@ class QzonePlugin(Star):
         await self.campus_wall.view(event, input)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("过稿", alias={"通过稿件"})
+    @filter.command("过稿", alias={"通过稿件", "通过投稿"})
     async def approve_post(
         self, event: AiocqhttpMessageEvent, input: str | int | None = None
     ):
@@ -208,7 +208,7 @@ class QzonePlugin(Star):
         await self.campus_wall.approve(event, input)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("拒稿", alias={"拒绝稿件"})
+    @filter.command("拒稿", alias={"拒绝稿件", "拒绝投稿"})
     async def reject_post(
         self, event: AiocqhttpMessageEvent, input: str | int | None = None
     ):

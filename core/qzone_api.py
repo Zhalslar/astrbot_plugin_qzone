@@ -14,7 +14,6 @@ import json5
 from aiocqhttp import CQHttp
 
 from astrbot.api import logger
-from astrbot.core.config.astrbot_config import AstrBotConfig
 
 from .comment import Comment
 from .post import Post
@@ -68,6 +67,7 @@ class Qzone:
     REPLY_URL = "https://h5.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_re_feeds"
     DELETE_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_delete_v6"
     DETAIL_URL = "https://h5.qzone.qq.com/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_msgdetail_v6"
+
 
     def __init__(self, client: CQHttp) -> None:
         self._session = aiohttp.ClientSession(
@@ -185,7 +185,8 @@ class Qzone:
                     timeout=timeout,
                     retry_count=retry_count + 1,
                 )
-            if code != 0:
+            if code:
+                logger.warning(f"请求失败: {code}，解析数据: {parse_data}")
                 return False, {"code": code, "message": parse_data.get("message")}
             return True, parse_data
 
@@ -195,7 +196,6 @@ class Qzone:
         succ, data = await self._request(
             method="POST",
             url=self.UPLOAD_IMAGE_URL,
-            timeout=60,
             data={
                 "filename": "filename",
                 "uploadtype": "1",
@@ -207,9 +207,15 @@ class Qzone:
                 "base64": "1",
                 "picfile": base64.b64encode(image).decode(),
             },
+            headers={
+                "referer": f"{self.BASE_URL}/{self.ctx.uin}",
+                "origin": self.BASE_URL,
+            },
+            timeout=60
         )
+
         if not succ:
-            raise RuntimeError("图片上传失败")
+            raise RuntimeError(f"图片上传失败: {data}")
         return data
 
     async def get_visitor(self) -> tuple[bool, str]:
@@ -233,7 +239,7 @@ class Qzone:
     def parse_upload_result(payload: dict[str, Any]) -> tuple[str, str]:
         """从上传返回体里提取 picbo 与 richval"""
         if payload.get("ret") != 0:
-            raise RuntimeError("图片上传失败")
+            raise RuntimeError(f"图片上传失败: {payload}")
 
         data = payload["data"]
         picbo = data["url"].split("&bo=", 1)[1]

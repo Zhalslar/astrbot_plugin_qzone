@@ -62,13 +62,13 @@ class PostOperator:
         end_parm = event.message_str.split(" ")[-1] if event else ""
         if "~" in end_parm:
             start_index, end_index = map(int, end_parm.split("~"))
-            index = start_index
+            pos = start_index - 1
             num = end_index - start_index + 1
         elif end_parm.isdigit():
-            index = int(end_parm)
+            pos = int(end_parm) - 1
             num = 1
         else:
-            index = 1
+            pos = 0
             num = 1
 
         if get_recent:
@@ -77,7 +77,7 @@ class PostOperator:
         else:
             # pos为开始位置， num为获取数量
             succ, data = await self.qzone.get_feeds(
-                target_id=target_id, pos=index, num=num
+                target_id=target_id, pos=pos, num=num
             )
 
         # 处理错误
@@ -98,7 +98,7 @@ class PostOperator:
                     event.stop_event()
             return []
 
-        posts = data[index - 1 : index - 1 + num] if get_recent else data  # type: ignore
+        posts = data[pos : pos + num] if get_recent else data  # type: ignore
 
         # 过滤自己的说说
         self.uin = str(self.qzone.ctx.uin)
@@ -120,7 +120,6 @@ class PostOperator:
             else:
                 # 多条说说则只获取基本信息
                 final_posts.append(post)
-
 
         # 存到数据库
         for p in final_posts:

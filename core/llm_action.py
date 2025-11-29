@@ -1,4 +1,5 @@
 import random
+import re
 from typing import Any
 
 from aiocqhttp import CQHttp
@@ -130,7 +131,7 @@ class LLMAction:
                 prompt=prompt,
                 image_urls=post.images,
             )
-            comment = llm_response.completion_text.rstrip("。")
+            comment = re.sub(r"[\s\u3000]+", "", llm_response.completion_text).rstrip("。")
             logger.info(f"LLM 生成的评论：{comment}")
             return comment
 

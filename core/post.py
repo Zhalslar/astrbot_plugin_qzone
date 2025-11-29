@@ -45,8 +45,6 @@ def extract_and_replace_nickname(input_string):
             if key.strip() == "nick":
                 nick_value = value.strip()
                 break
-        # 清理掉空格、换行、全角空格
-        nick_value = re.sub(r"[\s\u3000]+", "", nick_value)
         # 如果找到nick值，则返回@nick_value，否则返回空字符串
         return f"{nick_value} " if nick_value else ""
 

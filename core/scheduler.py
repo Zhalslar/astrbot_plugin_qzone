@@ -1,32 +1,29 @@
-
+import random
 import zoneinfo
+from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 
 from astrbot.api import logger
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.star.context import Context
 
-from .llm_action import LLMAction
 from .operate import PostOperator
 
+# ============================
+# 基类：随机偏移的周期任务
+# ============================
 
-class AutoComment:
+
+class AutoRandomCronTask:
     """
-    自动评论器：自动遍历好友说说并评论(顺便点赞)
+    基类：在 cron 规定的周期内随机某个时间点执行任务。
+    子类只需实现 async do_task()。
     """
 
-    def __init__(
-        self,
-        context: Context,
-        config: AstrBotConfig,
-        operator: PostOperator,
-        llm: LLMAction,
-    ):
-        self.operator = operator
-        self.llm = llm
-
+    def __init__(self, context: Context, cron_expr: str, job_name: str):
         tz = context.get_config().get("timezone")
         self.timezone = (
             zoneinfo.ZoneInfo(tz) if tz else zoneinfo.ZoneInfo("Asia/Shanghai")
@@ -34,94 +31,96 @@ class AutoComment:
 
         self.scheduler = AsyncIOScheduler(timezone=self.timezone)
         self.scheduler.start()
-        cron_cfg = config.get("comment_cron", "0 8 * * 1")
-        self.register_task(cron_cfg)
 
-        logger.info(f"[AutoComment] 已启动，任务周期：{cron_cfg}")
+        self.cron_expr = cron_expr
+        self.job_name = job_name
 
+        self.register_task()
 
-    def register_task(self, cron_expr: str):
-        """
-        注册一个 cron 任务，例如 "0 8 * * 1"
-        """
+        logger.info(f"[{self.job_name}] 已启动，任务周期：{self.cron_expr}")
+
+    # 注册 cron → 触发 schedule_random_job
+    def register_task(self):
         try:
-            trigger = CronTrigger.from_crontab(cron_expr)
+            self.trigger = CronTrigger.from_crontab(self.cron_expr)
             self.scheduler.add_job(
-                func=self.run_once,
-                trigger=trigger,
-                name="qzone_auto_comment",
+                func=self.schedule_random_job(),
+                trigger=self.trigger,
+                name=f"{self.job_name}_scheduler",
                 max_instances=1,
             )
         except Exception as e:
-            logger.error(f"[AutoComment] Cron 格式错误：{e}")
+            logger.error(f"[{self.job_name}] Cron 格式错误：{e}")
+
+    # 计算当前周期随机时间点，并安排 DateTrigger 执行
+    def schedule_random_job(self):
+        now = datetime.now(self.timezone)
+        next_run = self.trigger.get_next_fire_time(None, now)
+        if not next_run:
+            logger.error(f"[{self.job_name}] 无法计算下一次周期时间")
+            return
+
+        cycle_seconds = int((next_run - now).total_seconds())
+        delay = random.randint(0, cycle_seconds)
+        target_time = now + timedelta(seconds=delay)
+
+        logger.info(f"[{self.job_name}] 下周期随机执行时间：{target_time}")
+
+        self.scheduler.add_job(
+            func=self._run_task_wrapper,
+            trigger=DateTrigger(run_date=target_time, timezone=self.timezone),
+            name=f"{self.job_name}_once_{target_time.timestamp()}",
+            max_instances=1,
+        )
+
+    # 统一包装（方便打印日志）
+    async def _run_task_wrapper(self):
+        logger.info(f"[{self.job_name}] 开始执行任务")
+        await self.do_task()
+        logger.info(f"[{self.job_name}] 本轮任务完成")
+
+    # 子类实现
+    async def do_task(self):
+        raise NotImplementedError
+
+    async def terminate(self):
+        self.scheduler.remove_all_jobs()
+        logger.info(f"[{self.job_name}] 已停止")
 
 
-    async def run_once(self):
-        """执行一次完整的遍历 + 点赞 + 评论"""
-        logger.info("[AutoComment] 开始自动遍历好友说说...")
+# ============================
+# 自动评论
+# ============================
+
+
+class AutoComment(AutoRandomCronTask):
+    def __init__(
+        self,
+        context: Context,
+        config: AstrBotConfig,
+        operator: PostOperator,
+    ):
+        self.operator = operator
+        super().__init__(context, config["comment_cron"], "AutoComment")
+
+    async def do_task(self):
         await self.operator.read_feed(get_recent=True)
-        logger.info("[AutoComment] 本轮任务结束")
-
-    async def terminate(self):
-        self.scheduler.remove_all_jobs()
-        logger.info("[AutoComment] 已停止")
 
 
+# ============================
+# 自动发说说
+# ============================
 
 
-class AutoPublish:
-    """
-    自动发说说任务类
-    """
-
+class AutoPublish(AutoRandomCronTask):
     def __init__(
         self,
         context: Context,
         config: AstrBotConfig,
-        operator: PostOperator,
-        llm: LLMAction,
+        operator: PostOperator
     ):
         self.operator = operator
-        self.llm = llm
+        super().__init__(context, config["publish_cron"], "AutoPublish")
 
-        self.per_qzone_num = config.get("per_qzone_num", 5)
-
-        tz = context.get_config().get("timezone")
-        self.timezone = (
-            zoneinfo.ZoneInfo(tz) if tz else zoneinfo.ZoneInfo("Asia/Shanghai")
-        )
-
-        self.scheduler = AsyncIOScheduler(timezone=self.timezone)
-        self.scheduler.start()
-        cron_cfg = config.get("publish_cron", "45 1 * * *")
-        self.register_task(cron_cfg)
-
-        logger.info(f"[AutoPublish] 已启动，任务周期：{cron_cfg}")
-
-    def register_task(self, cron_expr: str):
-        """
-        注册一个 cron 任务，例如 "45 1 * * *"
-        """
-        try:
-            trigger = CronTrigger.from_crontab(cron_expr)
-            self.scheduler.add_job(
-                func=self.run_once,
-                trigger=trigger,
-                name="qzone_auto_publish",
-                max_instances=1,
-            )
-        except Exception as e:
-            logger.error(f"[AutoPublish] Cron 格式错误：{e}")
-
-    async def run_once(self):
-        """
-        计划任务执行一次自动发说说
-        """
-        logger.info("[AutoPublish] 执行自动发说说任务")
-        text = await self.llm.generate_diary()
-        await self.operator.publish_feed(text=text)
-        logger.info("[AutoPublish] 发说说完成")
-
-    async def terminate(self):
-        self.scheduler.remove_all_jobs()
-        logger.info("[AutoPublish] 已停止")
+    async def do_task(self):
+        await self.operator.publish_feed(llm_text=True)

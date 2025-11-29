@@ -26,7 +26,7 @@ from .core.operate import PostOperator
 from .core.post import PostDB
 from .core.qzone_api import Qzone
 from .core.scheduler import AutoComment, AutoPublish
-from .core.utils import get_image_urls
+from .core.utils import get_ats, get_image_urls
 
 
 @register("astrbot_plugin_qzone", "Zhalslar", "...", "...")
@@ -158,9 +158,18 @@ class QzonePlugin(Star):
             await self.operator.read_feed(event, get_recent=False, get_sender=True, send_error=False)
 
     @filter.command("看说说", alias={"查看说说"})
-    async def view_feed(self, event: AiocqhttpMessageEvent, at: str | None = None):
-        """看说说 <@群友> <序号>"""
-        get_recent = False if str(at).startswith("@") else True
+    async def view_feed(self, event: AiocqhttpMessageEvent, at: str | None = None) -> None:
+        """
+        看说说 <@群友> <序号>
+        """
+        at_ids = get_ats(event)
+        get_recent = not at_ids
+
+        # 把本次要查看的用户从忽略列表中移除
+        for uid in {event.get_sender_id(), *at_ids}:
+            self.config["ignore_users"].pop(uid, None)
+
+        self.config.save_config()
         await self.operator.view_feed(event, get_recent=get_recent)
 
     @filter.command("读说说", alias={"评论说说", "评说说"})

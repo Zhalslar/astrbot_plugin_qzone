@@ -220,6 +220,8 @@ class PostOperator:
         images: list[str] | None = None,
         post: Post | None = None,
         publish: bool = True,
+        llm_text: bool = False,
+        llm_images: bool = False,
     ):
         """
         发说说封装
@@ -229,8 +231,15 @@ class PostOperator:
             images (list[str]): 图片
             post (Post | None, optional): 原说说. Defaults to None.
             publish (bool, optional): 是否发布. Defaults to True.
+            llm_text (bool, optional): 是否使用llm配文. Defaults to True.
+            llm_images (bool, optional): 是否使用llm配图. Defaults to True.
         """
-        # TODO: llm配图
+        # llm配文
+        if llm_text:
+            text = await self.llm.generate_diary()
+
+        # TODO:llm配图
+        #if llm_images:
         # images = await self.llm.generate_images(text, self.per_qzone_num)
 
         if not post:

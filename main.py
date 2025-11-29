@@ -113,16 +113,14 @@ class QzonePlugin(Star):
         # 加载自动评论模块
         if self.config.get("comment_cron"):
             self.auto_comment = AutoComment(
-                self.context, self.config, self.operator, self.llm
+                self.context, self.config, self.operator
             )
-            logger.info("自动发说说模块加载完毕！")
 
         # 加载自动发说说模块
         if self.config.get("comment_cron"):
             self.auto_publish = AutoPublish(
-                self.context, self.config, self.operator, self.llm
+                self.context, self.config, self.operator
             )
-            logger.info("自动发说说模块加载完毕！")
 
         # 加载表白墙模块
         self.campus_wall = CampusWall(

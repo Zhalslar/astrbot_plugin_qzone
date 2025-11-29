@@ -44,7 +44,7 @@ class AutoRandomCronTask:
         try:
             self.trigger = CronTrigger.from_crontab(self.cron_expr)
             self.scheduler.add_job(
-                func=lambda: self.schedule_random_job(),
+                func=self.schedule_random_job(),
                 trigger=self.trigger,
                 name=f"{self.job_name}_scheduler",
                 max_instances=1,

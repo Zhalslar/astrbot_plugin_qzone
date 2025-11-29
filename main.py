@@ -117,7 +117,7 @@ class QzonePlugin(Star):
             )
 
         # 加载自动发说说模块
-        if self.config.get("comment_cron"):
+        if self.config.get("publish_cron"):
             self.auto_publish = AutoPublish(
                 self.context, self.config, self.operator
             )

@@ -167,7 +167,8 @@ class QzonePlugin(Star):
 
         # 把本次要查看的用户从忽略列表中移除
         for uid in {event.get_sender_id(), *at_ids}:
-            self.config["ignore_users"].remove(uid)
+            if int(uid) in self.config["ignore_users"]:
+                self.config["ignore_users"].remove(int(uid))
 
         self.config.save_config()
         await self.operator.view_feed(event, get_recent=get_recent)

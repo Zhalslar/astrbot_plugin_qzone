@@ -112,15 +112,11 @@ class QzonePlugin(Star):
 
         # 加载自动评论模块
         if self.config.get("comment_cron"):
-            self.auto_comment = AutoComment(
-                self.context, self.config, self.operator
-            )
+            self.auto_comment = AutoComment(self.context, self.config, self.operator)
 
         # 加载自动发说说模块
         if self.config.get("publish_cron"):
-            self.auto_publish = AutoPublish(
-                self.context, self.config, self.operator
-            )
+            self.auto_publish = AutoPublish(self.context, self.config, self.operator)
 
         # 加载表白墙模块
         self.campus_wall = CampusWall(
@@ -155,10 +151,14 @@ class QzonePlugin(Star):
             random.random() < self.config["read_prob"]
             and event.get_sender_id() not in self.config["ignore_users"]
         ):
-            await self.operator.read_feed(event, get_recent=False, get_sender=True, send_error=False)
+            await self.operator.read_feed(
+                event, get_recent=False, get_sender=True, send_error=False
+            )
 
     @filter.command("看说说", alias={"查看说说"})
-    async def view_feed(self, event: AiocqhttpMessageEvent, at: str | None = None) -> None:
+    async def view_feed(
+        self, event: AiocqhttpMessageEvent, at: str | None = None
+    ) -> None:
         """
         看说说 <@群友> <序号>
         """
@@ -167,7 +167,7 @@ class QzonePlugin(Star):
 
         # 把本次要查看的用户从忽略列表中移除
         for uid in {event.get_sender_id(), *at_ids}:
-            self.config["ignore_users"].pop(uid, None)
+            self.config["ignore_users"].remove(uid)
 
         self.config.save_config()
         await self.operator.view_feed(event, get_recent=get_recent)

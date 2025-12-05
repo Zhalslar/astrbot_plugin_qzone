@@ -107,7 +107,7 @@ class QzonePlugin(Star):
 
         # 加载稿件操作模块
         self.operator = PostOperator(
-            self.config, self.qzone, self.db, self.llm, self.style
+            self.context, self.config, self.qzone, self.db, self.llm, self.style
         )
 
         # 加载自动评论模块
@@ -152,7 +152,11 @@ class QzonePlugin(Star):
             and event.get_sender_id() not in self.config["ignore_users"]
         ):
             await self.operator.read_feed(
-                event, get_recent=False, get_sender=True, send_error=False
+                event,
+                get_recent=False,
+                get_sender=True,
+                send_error=False,
+                send_admin=self.config["send_admin"],
             )
 
     @filter.command("看说说", alias={"查看说说"})

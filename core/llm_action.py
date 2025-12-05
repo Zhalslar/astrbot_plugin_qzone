@@ -124,7 +124,12 @@ class LLMAction:
         if not using_provider:
             raise ValueError("未配置 LLM 提供商")
         try:
-            prompt = f"\n这条帖子的具体内容如下：\n{post.text}\n{post.rt_con}"
+            content = post.text
+            if post.rt_con: # 转发文本
+                content += f"\n[转发]\n{post.rt_con}"
+
+            prompt = f"\n[帖子内容]：\n{content}"
+
             logger.debug(prompt)
             llm_response = await using_provider.text_chat(
                 system_prompt=self.config["comment_prompt"],

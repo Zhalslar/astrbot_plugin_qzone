@@ -5,6 +5,7 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
+from astrbot.core.star.context import Context
 
 from .comment import Comment
 from .llm_action import LLMAction
@@ -15,8 +16,15 @@ from .utils import get_ats, get_nickname
 
 class PostOperator:
     def __init__(
-        self, config: AstrBotConfig, qzone: Qzone, db: PostDB, llm: LLMAction, style
+        self,
+        context: Context,
+        config: AstrBotConfig,
+        qzone: Qzone,
+        db: PostDB,
+        llm: LLMAction,
+        style,
     ):
+        self.context = context
         self.config = config
         self.qzone = qzone
         self.db = db
@@ -24,6 +32,9 @@ class PostOperator:
         self.style = style
         self.uin = 0
         self.name = "我"
+        # 获取唯一管理员
+        self.admin_ids: list[str] = context.get_config().get("admins_id", [])
+        self.admin_id = next(aid for aid in self.admin_ids if aid.isdigit())
 
     # ------------------------ 公共 pipeline ------------------------ #
     async def _pipeline(
@@ -147,13 +158,18 @@ class PostOperator:
         no_self=True,
         no_commented=True,
         send_error: bool = True,
+        send_admin: bool = False,
     ):
         """
         读说说 <序号/范围> 即点赞+评论说说
         Args:
             event (AiocqhttpMessageEvent): 事件对象
-            get_recent (bool, optional): 是否获取最新说说. Defaults to True.
-            send_msg (bool, optional): 是否发送消息. Defaults to True.
+            get_recent (bool): 是否获取最新说说
+            get_sender (bool): 是否获取发送者
+            no_self (bool): 是否过滤自己的说说
+            no_commented (bool): 是否过滤已评论过的说说
+            send_error (bool): 是否发送错误信息
+            send_admin (bool): 是否仅发送消息给管理员
         """
         posts: list[Post] = await self._pipeline(
             event, get_recent, get_sender, no_self, no_commented, send_error
@@ -209,6 +225,9 @@ class PostOperator:
                 # 可视化
                 if event:
                     img_path = await post.to_image(self.style)
+                    if send_admin:
+                        event.message_obj.group_id = None # type: ignore
+                        event.message_obj.sender.user_id = self.admin_id
                     await event.send(event.image_result(img_path))
 
         logger.info(f"执行完毕，点赞成功 {like_succ} 条，评论成功 {comment_succ} 条")

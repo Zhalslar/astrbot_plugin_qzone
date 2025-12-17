@@ -70,17 +70,23 @@ class PostOperator:
         posts: list[Post] = []
 
         # 解析范围参数
-        end_parm = event.message_str.split(" ")[-1] if event else ""
-        if "~" in end_parm:
-            start_index, end_index = map(int, end_parm.split("~"))
-            pos = start_index - 1
-            num = end_index - start_index + 1
-        elif end_parm.isdigit():
-            pos = int(end_parm) - 1
-            num = 1
-        else:
-            pos = 0
-            num = 1
+        pos, num = 0, 1  # 默认值
+        if event:
+            end_parm = event.message_str.strip().split()[-1]
+            if "~" in end_parm:
+                try:
+                    start_str, end_str = end_parm.split("~", 1)
+                    start_index, end_index = int(start_str), int(end_str)
+                    if start_index <= 0 or end_index < start_index:
+                        raise ValueError("范围不合法")
+                    pos = start_index - 1
+                    num = end_index - start_index + 1
+                except ValueError:
+                    # 格式不对就回退到默认 1 条
+                    pos, num = 0, 1
+            elif end_parm.isdigit():
+                pos = int(end_parm) - 1
+                num = 1
 
         if get_recent:
             # 获取最新说说

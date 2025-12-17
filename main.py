@@ -159,9 +159,7 @@ class QzonePlugin(Star):
             )
 
     @filter.command("看说说", alias={"查看说说"})
-    async def view_feed(
-        self, event: AiocqhttpMessageEvent, at: str | None = None
-    ) -> None:
+    async def view_feed(self, event: AiocqhttpMessageEvent):
         """
         看说说 <@群友> <序号>
         """

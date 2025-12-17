@@ -200,6 +200,9 @@ class PostOperator:
             # -------------- 评论 --------------
             try:
                 content = await self.llm.generate_comment(post)
+                if not content:
+                    logger.error(f"[{idx}] 获取评论内容失败")
+                    continue
                 comment_ok, _ = await self.qzone.comment(
                     fid=post.tid,
                     target_id=str(post.uin),
@@ -215,7 +218,7 @@ class PostOperator:
                 comment = Comment(
                     uin=self.qzone.ctx.uin,
                     nickname=bot_name,
-                    content=content,
+                    content=content, # type: ignore
                     create_time=int(time.time()),
                     tid=0,
                     parent_tid=None,

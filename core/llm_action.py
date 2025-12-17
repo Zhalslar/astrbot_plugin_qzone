@@ -6,6 +6,7 @@ from aiocqhttp import CQHttp
 
 from astrbot.api import logger
 from astrbot.core.config.astrbot_config import AstrBotConfig
+from astrbot.core.provider.provider import Provider
 from astrbot.core.star.context import Context
 
 from .post import Post
@@ -16,6 +17,8 @@ class LLMAction:
         self.context = context
         self.config = config
         self.client = client
+        self.comment_provider_id = self.config["comment_provider_id"]
+        self.diary_provider_id = self.config["diary_provider_id"]
 
     def _build_context(
         self, round_messages: list[dict[str, Any]]
@@ -68,33 +71,31 @@ class LLMAction:
             return diary[start:end].strip()
         return ""
 
-    async def generate_diary(self, group_id: str = "", topic: str | None = None) -> str:
+    async def generate_diary(self, group_id: str = "", topic: str | None = None) -> str | None:
         """根据聊天记录生成日记"""
-        get_using = self.context.get_using_provider()
-        if not get_using:
-            raise ValueError("未配置 LLM 提供商")
+        provider = (
+            self.context.get_provider_by_id(self.config["diary_provider_id"])
+            or self.context.get_using_provider()
+        )
+        if not isinstance(provider, Provider):
+            logger.error("未配置用于文本生成任务的 LLM 提供商")
+            return None
         contexts = []
 
         if group_id:
             contexts = await self._get_msg_contexts(group_id)
-        else:
+        else:  # 随机获取一个群组
             group_list = await self.client.get_group_list()
-            group_ids = [group["group_id"] for group in group_list]
-            random_group_id = str(random.choice(group_ids))  # 随机获取一个群组
-            contexts = await self._get_msg_contexts(random_group_id)
+            group_ids = [
+                str(group["group_id"])
+                for group in group_list
+                if str(group["group_id"]) not in self.config["ignore_groups"]
+            ]
+            if not group_ids:
+                logger.warning("未找到可用群组")
+                return None
+            contexts = await self._get_msg_contexts(random.choice(group_ids))
         # TODO: 更多模式
-
-        system_prompt = (
-            f"# 写作主题：{topic}\n\n"
-            "请按照以下格式输出内容：\n"
-            "- 直接进入正文，避免前言或无关内容。\n"
-            "- 使用清晰的标题和子标题。\n"
-            "- 每个段落聚焦一个主题。\n"
-            "- 在段落末尾提供简短的总结。\n"
-            + self.config["diary_prompt"]
-            if topic
-            else self.config["diary_prompt"]
-        )
 
         # 系统提示，要求使用三对双引号包裹正文
         system_prompt = (
@@ -107,7 +108,7 @@ class LLMAction:
         logger.debug(f"{system_prompt}\n\n{contexts}")
 
         try:
-            llm_response = await get_using.text_chat(
+            llm_response = await provider.text_chat(
                 system_prompt=system_prompt,
                 contexts=contexts,
             )
@@ -118,25 +119,31 @@ class LLMAction:
         except Exception as e:
             raise ValueError(f"LLM 调用失败：{e}")
 
-    async def generate_comment(self, post: Post) -> str:
+    async def generate_comment(self, post: Post) -> str | None:
         """根据帖子内容生成评论"""
-        using_provider = self.context.get_using_provider()
-        if not using_provider:
-            raise ValueError("未配置 LLM 提供商")
+        provider = (
+            self.context.get_provider_by_id(self.config["comment_provider_id"])
+            or self.context.get_using_provider()
+        )
+        if not isinstance(provider, Provider):
+            logger.error("未配置用于文本生成任务的 LLM 提供商")
+            return None
         try:
             content = post.text
-            if post.rt_con: # 转发文本
+            if post.rt_con:  # 转发文本
                 content += f"\n[转发]\n{post.rt_con}"
 
             prompt = f"\n[帖子内容]：\n{content}"
 
             logger.debug(prompt)
-            llm_response = await using_provider.text_chat(
+            llm_response = await provider.text_chat(
                 system_prompt=self.config["comment_prompt"],
                 prompt=prompt,
                 image_urls=post.images,
             )
-            comment = re.sub(r"[\s\u3000]+", "", llm_response.completion_text).rstrip("。")
+            comment = re.sub(r"[\s\u3000]+", "", llm_response.completion_text).rstrip(
+                "。"
+            )
             logger.info(f"LLM 生成的评论：{comment}")
             return comment
 

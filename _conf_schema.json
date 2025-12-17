@@ -10,11 +10,25 @@
         "hint": "例如 C:\\styles\\my-style 或 /data/styles/default, 留空则使用默认样式。pillowmd用于渲染说说内容",
         "default": ""
     },
+    "comment_provider_id": {
+        "description": "评论说说用的LLM提供商",
+        "hint": "留空或者填写的提供商不存在时，则使用当前正在使用的LLM提供商",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+    },
     "comment_prompt": {
         "description": "评论说说的llm提示词",
         "type": "text",
         "hint": "强烈建议自行根据Bot人格进行改写，从而达到更好的效果",
         "default": "生成一句简短、直接、贴题、犀利的评论，不要解释、不做自我描述、不分选项"
+    },
+    "diary_provider_id": {
+        "description": "写说说用的LLM提供商",
+        "hint": "留空或者填写的提供商不存在时，则使用当前正在使用的LLM提供商",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
     },
     "diary_prompt": {
         "description": "写说说时用的llm提示词",
@@ -51,6 +65,12 @@
         "hint": "如果为True，则将渲染好的稿件私发给bot管理员，否则直接发到群里",
         "type": "bool",
         "default": false
+    },
+    "ignore_groups": {
+        "description": "忽略的群聊列表",
+        "hint": "若群聊被忽略，Bot将不会从该群聊抽取聊天记录来写说说。建议将信息比较敏感的群聊加入此列表",
+        "type": "list",
+        "default": []
     },
     "ignore_users": {
         "description": "忽略的用户列表",

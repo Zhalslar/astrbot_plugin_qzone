@@ -71,14 +71,15 @@ class LLMAction:
             return diary[start:end].strip()
         return ""
 
-    async def generate_diary(self, group_id: str = "", topic: str | None = None) -> str:
+    async def generate_diary(self, group_id: str = "", topic: str | None = None) -> str | None:
         """根据聊天记录生成日记"""
         provider = (
             self.context.get_provider_by_id(self.config["diary_provider_id"])
             or self.context.get_using_provider()
         )
         if not isinstance(provider, Provider):
-            raise ValueError("未配置用于文本生成任务的 LLM 提供商")
+            logger.error("未配置用于文本生成任务的 LLM 提供商")
+            return None
         contexts = []
 
         if group_id:
@@ -90,8 +91,10 @@ class LLMAction:
                 for group in group_list
                 if str(group["group_id"]) not in self.config["ignore_groups"]
             ]
-            random_group_id = random.choice(group_ids)
-            contexts = await self._get_msg_contexts(random_group_id)
+            if not group_ids:
+                logger.warning("未找到可用群组")
+                return None
+            contexts = await self._get_msg_contexts(random.choice(group_ids))
         # TODO: 更多模式
 
         # 系统提示，要求使用三对双引号包裹正文
@@ -116,14 +119,15 @@ class LLMAction:
         except Exception as e:
             raise ValueError(f"LLM 调用失败：{e}")
 
-    async def generate_comment(self, post: Post) -> str:
+    async def generate_comment(self, post: Post) -> str | None:
         """根据帖子内容生成评论"""
         provider = (
             self.context.get_provider_by_id(self.config["comment_provider_id"])
             or self.context.get_using_provider()
         )
         if not isinstance(provider, Provider):
-            raise ValueError("未配置用于文本生成任务的 LLM 提供商")
+            logger.error("未配置用于文本生成任务的 LLM 提供商")
+            return None
         try:
             content = post.text
             if post.rt_con:  # 转发文本

@@ -8,7 +8,7 @@ import pillowmd
 
 from astrbot.api import logger
 from astrbot.api.event import filter
-from astrbot.api.star import Context, Star, StarTools, register
+from astrbot.api.star import Context, Star, StarTools
 from astrbot.core import AstrBotConfig
 from astrbot.core.config.default import VERSION
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
@@ -29,7 +29,6 @@ from .core.scheduler import AutoComment, AutoPublish
 from .core.utils import get_ats, get_image_urls
 
 
-@register("astrbot_plugin_qzone", "Zhalslar", "...", "...")
 class QzonePlugin(Star):
     # 数据库版本
     DB_VERSION = 4

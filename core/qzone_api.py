@@ -360,6 +360,48 @@ class Qzone:
             },
         )
 
+    async def reply(
+        self,
+        fid: str,
+        target_name: str,
+        content: str,
+    ) -> tuple[bool, dict]:
+        """
+        回复指定评论。(@昵称 + 内容)
+        Args:
+            fid (str): 说说的动态ID。
+            target_name (str): 目标QQ昵称。
+            content (str): 回复的文本内容。
+        """
+        uin = self.ctx.uin
+        post_data = {
+            "topicId": f"{uin}_{fid}__1",
+            "uin": uin,
+            "hostUin": uin,
+            "content": f"@{target_name} {content}",
+            "format": "fs",
+            "plat": "qzone",
+            "source": "ic",
+            "platformid": 52,
+            "ref": "feeds",
+            "richtype": "",
+            "richval": "",
+            "paramstr": f"@{target_name}",
+        }
+        succ, data = await self._request(
+            method="POST",
+            url=self.REPLY_URL,
+            params={
+                "g_tk": self.ctx.gtk2,
+            },
+            data=post_data,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+            },
+        )
+        print(data)
+        return succ, data
+
     async def delete(self, tid: str):
         """删除tid对应说说（接口暂时未接通）"""
         await self.ready()

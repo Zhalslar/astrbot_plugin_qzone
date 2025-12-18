@@ -60,7 +60,7 @@ class QzonePlugin(Star):
         self.db = PostDB(self.db_path)
 
     async def initialize(self):
-        """加载、重载插件时触发"""
+        """插件加载时触发"""
         # 初始化数据库
         await self.db.initialize()
         # 实例化pillowmd样式
@@ -69,12 +69,21 @@ class QzonePlugin(Star):
         except Exception as e:
             logger.error(f"无法加载pillowmd样式：{e}")
 
-        asyncio.create_task(self.initialize_qzone(False))
+        asyncio.create_task(self.initialize_qzone(wait_ws_connected=False))
+
+    async def terminate(self):
+        """插件卸载时"""
+        if hasattr(self, "qzone"):
+            await self.qzone.terminate()
+        if hasattr(self, "auto_comment"):
+            await self.auto_comment.terminate()
+        if hasattr(self, "auto_publish"):
+            await self.auto_publish.terminate()
 
     @filter.on_platform_loaded()
     async def on_platform_loaded(self):
         """平台加载完成时"""
-        asyncio.create_task(self.initialize_qzone(True))
+        asyncio.create_task(self.initialize_qzone(wait_ws_connected=True))
 
     async def initialize_qzone(self, wait_ws_connected: bool = False):
         """初始化QQ空间、自动评论模块、自动发说说模块"""
@@ -184,7 +193,7 @@ class QzonePlugin(Star):
     @filter.command("发说说")
     async def publish_feed(self, event: AiocqhttpMessageEvent):
         """发说说 <内容> <图片>, 由用户指定内容"""
-        text = event.message_str.removeprefix("发说说").strip()
+        text = event.message_str.partition(" ")[2]
         images = await get_image_urls(event)
         await self.operator.publish_feed(event=event, text=text, images=images)
 
@@ -231,12 +240,3 @@ class QzonePlugin(Star):
     ):
         """删除稿件 <稿件ID>"""
         await self.campus_wall.delete(event, input)
-
-    async def terminate(self):
-        """插件卸载时"""
-        if hasattr(self, "qzone"):
-            await self.qzone.terminate()
-        if hasattr(self, "auto_comment"):
-            await self.auto_comment.terminate()
-        if hasattr(self, "auto_publish"):
-            await self.auto_publish.terminate()

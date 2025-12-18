@@ -301,3 +301,45 @@ class PostOperator:
         if event:
             img_path = await post.to_image(self.style)
             await event.send(event.image_result(img_path))
+
+
+    # async def reply_comment(self, event: AiocqhttpMessageEvent):
+    #     """
+    #     回复评论
+    #     Args:
+    #         event (AiocqhttpMessageEvent): 事件
+    #     """
+    #     post = await Post.get_by_tid(self.db, event.message_obj.message_id)
+    #     comment = await Comment.get_by_tid(self.db, event.message_obj.message_id)
+    #     reply_event_data = await get_reply_event_data(event)
+    #     new_event = Event.from_payload(reply_event_data)
+    #     if not new_event:
+    #         logger.error(f"无法从回复消息数据构造 Event 对象: {reply_event_data}")
+    #         return await event.send(event.plain_result("无法从回复消息数据构造 Event 对象"))
+    #     abm_reply = await self._convert_handle_message_event(new_event, get_reply=False)
+    #     if not abm_reply:
+    #         logger.error(f"无法从回复消息数据构造 Event 响应对象: {reply_event_data}")
+    #         return await event.send(event.plain_result("无法从回复消息数据构造 Event 响应对象"))
+    #     reply_text = await self.llm.generate_comment(post, comment, abm_reply)
+    #     reply_ok, _ = await self.qzone.comment(
+    #         fid=post.tid,
+    #         target_id=str(comment.uin),
+    #         content=reply_text,
+    #         parent_tid=comment.tid,
+    #     )
+    #     if not reply_ok:
+    #         logger.error(f"回复评论失败")
+    #         return await event.send(event.plain_result("回复评论失败"))
+    #     comment = Comment(
+    #         uin=self.qzone.ctx.uin,
+    #         nickname=bot_name,
+    #         content=reply_text,
+    #         create_time=int(time.time()),
+    #         tid=0,
+    #         parent_tid=comment.tid,
+    #     )
+    #     post.comments.append(comment)
+    #     await post.save(self.db)
+    #     img_path = await post.to_image(self.style)
+    #     await event.send(event.image_result(img_path))
+    #     await self.update_dashboard(event)

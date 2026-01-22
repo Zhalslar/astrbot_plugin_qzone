@@ -5,20 +5,19 @@ from typing import Any
 from aiocqhttp import CQHttp
 
 from astrbot.api import logger
-from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.provider.provider import Provider
 from astrbot.core.star.context import Context
 
+from .config import PluginConfig
 from .post import Post
 
 
 class LLMAction:
-    def __init__(self, context: Context, config: AstrBotConfig, client: CQHttp):
+    def __init__(self, context: Context, config: PluginConfig, client: CQHttp):
         self.context = context
-        self.config = config
+        self.cfg = config
         self.client = client
-        self.comment_provider_id = self.config["comment_provider_id"]
-        self.diary_provider_id = self.config["diary_provider_id"]
+
 
     def _build_context(
         self, round_messages: list[dict[str, Any]]
@@ -43,7 +42,7 @@ class LLMAction:
         """获取群聊历史消息"""
         message_seq = 0
         contexts: list[dict] = []
-        while len(contexts) < self.config["diary_max_msg"]:
+        while len(contexts) < self.cfg.diary_max_msg:
             payloads = {
                 "group_id": group_id,
                 "message_seq": message_seq,
@@ -74,7 +73,7 @@ class LLMAction:
     async def generate_diary(self, group_id: str = "", topic: str | None = None) -> str | None:
         """根据聊天记录生成日记"""
         provider = (
-            self.context.get_provider_by_id(self.config["diary_provider_id"])
+            self.context.get_provider_by_id(self.cfg.diary_provider_id)
             or self.context.get_using_provider()
         )
         if not isinstance(provider, Provider):
@@ -89,7 +88,7 @@ class LLMAction:
             group_ids = [
                 str(group["group_id"])
                 for group in group_list
-                if str(group["group_id"]) not in self.config["ignore_groups"]
+                if str(group["group_id"]) not in self.cfg.ignore_groups
             ]
             if not group_ids:
                 logger.warning("未找到可用群组")
@@ -102,7 +101,7 @@ class LLMAction:
             f"# 写作主题：{topic or '从聊天内容中选一个主题'}\n\n"
             "# 输出格式要求：\n"
             '- 使用三对双引号（"""）将正文内容包裹起来。\n\n'
-            + self.config["diary_prompt"]
+            + self.cfg.diary_prompt
         )
 
         logger.debug(f"{system_prompt}\n\n{contexts}")
@@ -122,7 +121,7 @@ class LLMAction:
     async def generate_comment(self, post: Post) -> str | None:
         """根据帖子内容生成评论"""
         provider = (
-            self.context.get_provider_by_id(self.config["comment_provider_id"])
+            self.context.get_provider_by_id(self.cfg.comment_provider_id)
             or self.context.get_using_provider()
         )
         if not isinstance(provider, Provider):
@@ -137,7 +136,7 @@ class LLMAction:
 
             logger.debug(prompt)
             llm_response = await provider.text_chat(
-                system_prompt=self.config["comment_prompt"],
+                system_prompt=self.cfg.comment_prompt,
                 prompt=prompt,
                 image_urls=post.images,
             )

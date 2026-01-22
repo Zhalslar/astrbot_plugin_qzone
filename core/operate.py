@@ -1,13 +1,13 @@
 import time
 
 from astrbot.api import logger
-from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 from astrbot.core.star.context import Context
 
 from .comment import Comment
+from .config import PluginConfig
 from .llm_action import LLMAction
 from .post import Post, PostDB
 from .qzone_api import Qzone
@@ -18,7 +18,7 @@ class PostOperator:
     def __init__(
         self,
         context: Context,
-        config: AstrBotConfig,
+        config: PluginConfig,
         qzone: Qzone,
         db: PostDB,
         llm: LLMAction,
@@ -63,7 +63,7 @@ class PostOperator:
             logger.error("获取不到用户ID")
             return []
 
-        if int(target_id) in self.config["ignore_users"]:  # 忽略用户
+        if int(target_id) in self.config.ignore_users:  # 忽略用户
             logger.warning(f"已忽略用户（{target_id}）的QQ空间")
             return []
 
@@ -103,7 +103,7 @@ class PostOperator:
             if isinstance(data, dict):
                 if code := data.get("code"):
                     if code in [-10031]:
-                        self.config["ignore_users"].append(int(target_id))
+                        self.config.ignore_users.append(str(target_id))
                         logger.warning(
                             f"已将用户（{target_id}）添加到忽略列表，下次不再处理该用户的空间"
                         )

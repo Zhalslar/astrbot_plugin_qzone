@@ -1,28 +1,22 @@
 from astrbot.api import logger
-from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.message.components import BaseMessageComponent, Image, Plain
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
-from astrbot.core.star.context import Context
 
+from .config import PluginConfig
 from .post import Post, PostDB
 from .qzone_api import Qzone
 from .utils import get_image_urls
 
 
 class CampusWall:
-    def __init__(
-        self, context: Context, config: AstrBotConfig, qzone: Qzone, db: PostDB, style
-    ):
+    def __init__(self, config: PluginConfig, qzone: Qzone, db: PostDB, style):
+        self.cfg = config
         self.qzone = qzone
         self.db = db
         self.style = style
-        # 管理群ID，审批信息会发到此群
-        self.manage_group: int = config.get("manage_group", 0)
-        # 管理员QQ号列表，审批信息会私发给这些人
-        self.admins_id: list[str] = list(set(context.get_config().get("admins_id", [])))
 
     async def notice_admin(
         self, event: AiocqhttpMessageEvent, chain: list[BaseMessageComponent]
@@ -32,7 +26,7 @@ class CampusWall:
         obmsg = await event._parse_onebot_json(MessageChain(chain))
 
         async def send_to_admins():
-            for admin_id in self.admins_id:
+            for admin_id in self.cfg.admins_id:
                 if admin_id.isdigit():
                     try:
                         await client.send_private_msg(
@@ -41,15 +35,15 @@ class CampusWall:
                     except Exception as e:
                         logger.error(f"无法反馈管理员：{e}")
 
-        if self.manage_group:
+        if self.cfg.manage_group:
             try:
                 await client.send_group_msg(
-                    group_id=int(self.manage_group), message=obmsg
+                    group_id=int(self.cfg.manage_group), message=obmsg
                 )
             except Exception as e:
                 logger.error(f"无法反馈管理群：{e}")
                 await send_to_admins()
-        elif self.admins_id:
+        elif self.cfg.admins_id:
             await send_to_admins()
 
     async def notice_user(
@@ -75,7 +69,7 @@ class CampusWall:
             except Exception as e:
                 logger.error(f"无法投稿者的群：{e}")
                 await send_to_user()
-        elif self.admins_id:
+        elif self.cfg.admins_id:
             await send_to_user()
 
     @staticmethod

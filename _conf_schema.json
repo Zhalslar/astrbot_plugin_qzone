@@ -8,7 +8,7 @@
         "description": "Pillowmd样式目录路径",
         "type": "string",
         "hint": "例如 C:\\styles\\my-style 或 /data/styles/default, 留空则使用默认样式。pillowmd用于渲染说说内容",
-        "default": ""
+        "default": "data/plugins/astrbot_plugin_qzone/default_style"
     },
     "comment_provider_id": {
         "description": "评论说说用的LLM提供商",

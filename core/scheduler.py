@@ -7,9 +7,9 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 
 from astrbot.api import logger
-from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.star.context import Context
 
+from .config import PluginConfig
 from .operate import PostOperator
 
 # ============================
@@ -97,11 +97,12 @@ class AutoComment(AutoRandomCronTask):
     def __init__(
         self,
         context: Context,
-        config: AstrBotConfig,
+        config: PluginConfig,
         operator: PostOperator,
     ):
         self.operator = operator
-        super().__init__(context, config["comment_cron"], "AutoComment")
+        cron = config.comment_cron
+        super().__init__(context, cron, "AutoComment")
 
     async def do_task(self):
         await self.operator.read_feed(get_recent=True)
@@ -113,14 +114,10 @@ class AutoComment(AutoRandomCronTask):
 
 
 class AutoPublish(AutoRandomCronTask):
-    def __init__(
-        self,
-        context: Context,
-        config: AstrBotConfig,
-        operator: PostOperator
-    ):
+    def __init__(self, context: Context, config: PluginConfig, operator: PostOperator):
         self.operator = operator
-        super().__init__(context, config["publish_cron"], "AutoPublish")
+        cron = config.publish_cron
+        super().__init__(context, cron, "AutoPublish")
 
     async def do_task(self):
         await self.operator.publish_feed(llm_text=True)

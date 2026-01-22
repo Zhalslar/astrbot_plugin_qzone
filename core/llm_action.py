@@ -71,6 +71,33 @@ class LLMAction:
             return diary[start:end].strip()
         return ""
 
+    def _select_prompt(self, config_key: str) -> str:
+        val = self.config.get(config_key)
+        if not val:
+            return ""
+        
+        # Handle list
+        if isinstance(val, list):
+            if not val:
+                return ""
+            
+            # 自动修复：检测是否被错误地拆分成了字符列表（例如 ["你", "好"]）
+            # 如果列表长度大于1且所有元素都是单字符，则认为是配置迁移导致的错误，尝试合并回字符串
+            if len(val) > 1 and all(isinstance(x, str) and len(x) == 1 for x in val):
+                val = "".join(val)
+                # 合并后 val 变为字符串，将落入下方的 str 处理逻辑
+            else:
+                return random.choice(val)
+            
+        # Handle string (legacy or recovered)
+        if isinstance(val, str):
+            # Support --- delimiter
+            if "\n---\n" in val:
+                return random.choice(re.split(r'\n-{3,}\n', val)).strip()
+            return val
+            
+        return str(val)
+
     async def generate_diary(self, group_id: str = "", topic: str | None = None) -> str | None:
         """根据聊天记录生成日记"""
         provider = (
@@ -102,7 +129,7 @@ class LLMAction:
             f"# 写作主题：{topic or '从聊天内容中选一个主题'}\n\n"
             "# 输出格式要求：\n"
             '- 使用三对双引号（"""）将正文内容包裹起来。\n\n'
-            + self.config["diary_prompt"]
+            + self._select_prompt("diary_prompt")
         )
 
         logger.debug(f"{system_prompt}\n\n{contexts}")
@@ -136,8 +163,11 @@ class LLMAction:
             prompt = f"\n[帖子内容]：\n{content}"
 
             logger.debug(prompt)
+            # Random prompt selection
+            selected_prompt = self._select_prompt("comment_prompt")
+            
             llm_response = await provider.text_chat(
-                system_prompt=self.config["comment_prompt"],
+                system_prompt=selected_prompt,
                 prompt=prompt,
                 image_urls=post.images,
             )

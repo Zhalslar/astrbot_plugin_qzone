@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 from astrbot.api import logger
@@ -35,6 +36,7 @@ class PostOperator:
         # 获取唯一管理员
         self.admin_ids: list[str] = context.get_config().get("admins_id", [])
         self.admin_id = next(aid for aid in self.admin_ids if aid.isdigit())
+        self.batch_running = False
 
     # ------------------------ 公共 pipeline ------------------------ #
     async def _pipeline(
@@ -301,6 +303,74 @@ class PostOperator:
         if event:
             img_path = await post.to_image(self.style)
             await event.send(event.image_result(img_path))
+
+    async def stop_batch(self):
+        self.batch_running = False
+        logger.info("已请求停止批量评论")
+
+    async def batch_comment(
+        self,
+        event: AiocqhttpMessageEvent,
+        target: str,
+        start: int,
+        end: int,
+        delay: float,
+    ):
+        # 批量评论
+        target_id = target
+        if target.startswith("[CQ:at"):
+            # extract id from at
+            import re
+            match = re.search(r"qq=(\d+)", target)
+            if match:
+                target_id = match.group(1)
+        
+        # Validation
+        if not target_id.isdigit():
+             await event.send(event.plain_result("目标用户ID无效"))
+             return
+
+        self.batch_running = True
+        await event.send(event.plain_result(f"开始批量评论 {target_id} 的说说 {start}~{end}，间隔 {delay} 秒"))
+
+        for i in range(start, end + 1):
+            if not self.batch_running:
+                await event.send(event.plain_result("批量评论已停止"))
+                break
+            pos = i - 1
+            # Fetch 1
+            succ, data = await self.qzone.get_feeds(target_id=target_id, pos=pos, num=1)
+            
+            if not succ or not data:
+                logger.warning(f"获取第 {i} 条说说失败，跳过")
+                continue
+                
+            post = data[0]
+            
+            # Like
+            try:
+                await self.qzone.like(tid=post.tid, target_id=str(post.uin))
+                logger.info(f"[{i}] 点赞成功")
+            except Exception as e:
+                logger.warning(f"[{i}] 点赞失败: {e}")
+
+            # Comment
+            try:
+                content = await self.llm.generate_comment(post)
+                if content:
+                    await self.qzone.comment(fid=post.tid, target_id=str(post.uin), content=content)
+                    logger.info(f"[{i}] 评论成功: {content}")
+                else:
+                    logger.warning(f"[{i}] 生成评论失败")
+            except Exception as e:
+                 logger.warning(f"[{i}] 评论失败: {e}")
+
+            # Wait
+            if i < end:
+                await asyncio.sleep(delay)
+        
+        await event.send(event.plain_result("批量评论任务结束"))
+
 
 
     # async def reply_comment(self, event: AiocqhttpMessageEvent):

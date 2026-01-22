@@ -240,3 +240,32 @@ class QzonePlugin(Star):
     ):
         """删除稿件 <稿件ID>"""
         await self.campus_wall.delete(event, input)
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("批量评论")
+    async def batch_comment_cmd(self, event: AiocqhttpMessageEvent):
+        """批量评论 <id/@> <start> <end> <delay>"""
+        msg = event.message_str
+        parts = msg.split()
+        if len(parts) < 5:
+             await event.send(event.plain_result("参数不足: /批量评论 <id/@> <start> <end> <delay>"))
+             return
+        
+        target = parts[1]
+        try:
+            start = int(parts[2])
+            end = int(parts[3])
+            delay = float(parts[4])
+        except ValueError:
+             await event.send(event.plain_result("参数格式错误"))
+             return
+
+        await self.operator.batch_comment(event, target, start, end, delay)
+
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("停止批量评论")
+    async def stop_batch_comment_cmd(self, event: AiocqhttpMessageEvent):
+        """停止批量评论"""
+        await self.operator.stop_batch()
+        await event.send(event.plain_result("已发送停止信号"))

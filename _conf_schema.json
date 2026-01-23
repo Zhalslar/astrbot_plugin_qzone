@@ -7,12 +7,47 @@
     "pillowmd_style_dir": {
         "description": "Pillowmd样式目录路径",
         "type": "string",
-        "hint": "例如 C:\\styles\\my-style 或 /data/styles/default, 留空则使用默认样式。pillowmd用于渲染说说内容",
+        "hint": "例如 C:\\styles\\my-style 或 /data/styles/default, 留空则使用默认样式。 pillowmd用于渲染说说内容",
         "default": ""
     },
     "comment_provider_id": {
-        "description": "评论说说用的LLM提供商",
-        "hint": "留空或者填写的提供商不存在时，则使用当前正在使用的LLM提供商",
+        "description": "评论说说用的LLM (优先级1)",
+        "hint": "主要使用的LLM",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+    },
+    "comment_provider_id_2": {
+        "description": "评论说说用的LLM (优先级2)",
+        "hint": "备用LLM 1",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+    },
+    "comment_provider_id_3": {
+        "description": "评论说说用的LLM (优先级3)",
+        "hint": "备用LLM 2",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+    },
+    "comment_provider_id_4": {
+        "description": "评论说说用的LLM (优先级4)",
+        "hint": "备用LLM 3",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+    },
+    "comment_provider_id_5": {
+        "description": "评论说说用的LLM (优先级5)",
+        "hint": "备用LLM 4",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+    },
+    "comment_provider_id_6": {
+        "description": "评论说说用的LLM (优先级6)",
+        "hint": "备用LLM 5",
         "type": "string",
         "default": "",
         "_special": "select_provider"
@@ -26,8 +61,43 @@
         ]
     },
     "diary_provider_id": {
-        "description": "写说说用的LLM提供商",
-        "hint": "留空或者填写的提供商不存在时，则使用当前正在使用的LLM提供商",
+        "description": "写说说用的LLM (优先级1)",
+        "hint": "主要使用的LLM",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+    },
+    "diary_provider_id_2": {
+        "description": "写说说用的LLM (优先级2)",
+        "hint": "备用LLM 1",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+    },
+    "diary_provider_id_3": {
+        "description": "写说说用的LLM (优先级3)",
+        "hint": "备用LLM 2",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+    },
+    "diary_provider_id_4": {
+        "description": "写说说用的LLM (优先级4)",
+        "hint": "备用LLM 3",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+    },
+    "diary_provider_id_5": {
+        "description": "写说说用的LLM (优先级5)",
+        "hint": "备用LLM 4",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
+    },
+    "diary_provider_id_6": {
+        "description": "写说说用的LLM (优先级6)",
+        "hint": "备用LLM 5",
         "type": "string",
         "default": "",
         "_special": "select_provider"

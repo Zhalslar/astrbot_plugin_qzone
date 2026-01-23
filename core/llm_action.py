@@ -1,6 +1,6 @@
 import random
 import re
-from typing import Any
+from typing import Any, Callable, Awaitable
 
 from aiocqhttp import CQHttp
 
@@ -17,11 +17,90 @@ class LLMAction:
         self.context = context
         self.config = config
         self.client = client
-        self.comment_provider_id = self.config["comment_provider_id"]
-        self.diary_provider_id = self.config["diary_provider_id"]
+
+    def _get_providers(self, task_type: str) -> list[str]:
+        """
+        Get the list of providers for a task.
+        Reads from provider_id (primary) and provider_id_2 to provider_id_6.
+        """
+        providers = []
+        base_key = ""
+        
+        if task_type == "comment":
+            base_key = "comment_provider_id"
+        elif task_type == "publish":
+            base_key = "diary_provider_id"
+            
+        if not base_key:
+            return []
+
+        # Check primary (no suffix)
+        if p1 := self.config.get(base_key):
+            providers.append(p1)
+            
+        # Check backups 2 to 6
+        for i in range(2, 7):
+            key = f"{base_key}_{i}"
+            if val := self.config.get(key):
+                if val not in providers:
+                    providers.append(val)
+        
+        return providers
+
+    async def _execute_with_failover(
+        self,
+        task_type: str,
+        execute_func: Callable[[Provider], Awaitable[Any]],
+        notify_func: Callable[[str, str], Awaitable[None]] | None = None
+    ) -> Any:
+        """
+        Execute an LLM task with failover.
+        :param task_type: "comment" or "publish"
+        :param execute_func: async function taking a Provider and returning result
+        :param notify_func: async function taking (failed_provider_id, next_provider_id) to notify user
+        """
+        provider_ids = self._get_providers(task_type)
+        
+        if not provider_ids:
+            # Try to get default provider from context directly
+            default_p = self.context.get_using_provider()
+            if default_p:
+                try:
+                    return await execute_func(default_p)
+                except Exception as e:
+                    raise ValueError(f"LLM Call Failed (Default Provider): {e}")
+            else:
+                raise ValueError("No LLM provider configured.")
+
+        last_exception = None
+        
+        for i, p_id in enumerate(provider_ids):
+            provider = self.context.get_provider_by_id(p_id)
+            if not isinstance(provider, Provider):
+                logger.warning(f"Provider ID {p_id} not found or invalid.")
+                continue
+            
+            try:
+                return await execute_func(provider)
+            except Exception as e:
+                last_exception = e
+                logger.warning(f"LLM Provider {p_id} failed: {e}")
+                
+                # Check if there is a next provider
+                if i < len(provider_ids) - 1:
+                    next_p = provider_ids[i+1]
+                    if notify_func:
+                        await notify_func(p_id, next_p)
+                else:
+                    # No more providers
+                    if notify_func:
+                        await notify_func(p_id, "NONE")
+        
+        raise ValueError(f"All LLM providers failed. Last error: {last_exception}")
 
     def _build_context(
-        self, round_messages: list[dict[str, Any]]
+        self,
+        round_messages: list[dict[str, Any]]
     ) -> list[dict[str, str]]:
         """
         把所有回合里的纯文本消息打包成 openai-style 的 user 上下文。
@@ -98,15 +177,8 @@ class LLMAction:
             
         return str(val)
 
-    async def generate_diary(self, group_id: str = "", topic: str | None = None) -> str | None:
+    async def generate_diary(self, group_id: str = "", topic: str | None = None, event_notify=None) -> str | None:
         """根据聊天记录生成日记"""
-        provider = (
-            self.context.get_provider_by_id(self.config["diary_provider_id"])
-            or self.context.get_using_provider()
-        )
-        if not isinstance(provider, Provider):
-            logger.error("未配置用于文本生成任务的 LLM 提供商")
-            return None
         contexts = []
 
         if group_id:
@@ -122,9 +194,7 @@ class LLMAction:
                 logger.warning("未找到可用群组")
                 return None
             contexts = await self._get_msg_contexts(random.choice(group_ids))
-        # TODO: 更多模式
-
-        # 系统提示，要求使用三对双引号包裹正文
+        
         system_prompt = (
             f"# 写作主题：{topic or '从聊天内容中选一个主题'}\n\n"
             "# 输出格式要求：\n"
@@ -134,48 +204,53 @@ class LLMAction:
 
         logger.debug(f"{system_prompt}\n\n{contexts}")
 
-        try:
+        async def _req(provider: Provider):
             llm_response = await provider.text_chat(
                 system_prompt=system_prompt,
                 contexts=contexts,
             )
-            diary = self.extract_content(llm_response.completion_text)
+            return self.extract_content(llm_response.completion_text)
+
+        async def _notify(failed_p, next_p):
+            if event_notify:
+                await event_notify.send(event_notify.plain_result(f"当前LLM {failed_p} 失效，正在切换到 {next_p}"))
+
+        try:
+            diary = await self._execute_with_failover("publish", _req, _notify)
             logger.info(f"LLM 生成的日记：{diary}")
             return diary
-
         except Exception as e:
             raise ValueError(f"LLM 调用失败：{e}")
 
-    async def generate_comment(self, post: Post) -> str | None:
+    async def generate_comment(self, post: Post, event_notify=None, index_info: str = "") -> str | None:
         """根据帖子内容生成评论"""
-        provider = (
-            self.context.get_provider_by_id(self.config["comment_provider_id"])
-            or self.context.get_using_provider()
-        )
-        if not isinstance(provider, Provider):
-            logger.error("未配置用于文本生成任务的 LLM 提供商")
-            return None
-        try:
-            content = post.text
-            if post.rt_con:  # 转发文本
-                content += f"\n[转发]\n{post.rt_con}"
+        
+        content = post.text
+        if post.rt_con:  # 转发文本
+            content += f"\n[转发]\n{post.rt_con}"
 
-            prompt = f"\n[帖子内容]：\n{content}"
+        prompt = f"\n[帖子内容]：\n{content}"
+        logger.debug(prompt)
+        
+        selected_prompt = self._select_prompt("comment_prompt")
 
-            logger.debug(prompt)
-            # Random prompt selection
-            selected_prompt = self._select_prompt("comment_prompt")
-            
+        async def _req(provider: Provider):
             llm_response = await provider.text_chat(
                 system_prompt=selected_prompt,
                 prompt=prompt,
                 image_urls=post.images,
             )
-            comment = re.sub(r"[\s\u3000]+", "", llm_response.completion_text).rstrip(
-                "。"
-            )
+            return re.sub(r"[\s\u3000]+", "", llm_response.completion_text).rstrip("。")
+
+        async def _notify(failed_p, next_p):
+            if event_notify:
+                prefix = f"正在评论{index_info} " if index_info else ""
+                msg = f"{prefix}当前llm:{failed_p}失效正在切换到{next_p}"
+                await event_notify.send(event_notify.plain_result(msg))
+
+        try:
+            comment = await self._execute_with_failover("comment", _req, _notify)
             logger.info(f"LLM 生成的评论：{comment}")
             return comment
-
         except Exception as e:
             raise ValueError(f"LLM 调用失败：{e}")

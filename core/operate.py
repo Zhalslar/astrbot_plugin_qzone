@@ -207,7 +207,7 @@ class PostOperator:
 
             # -------------- 评论 --------------
             try:
-                content = await self.llm.generate_comment(post)
+                content = await self.llm.generate_comment(post, event_notify=event, index_info=f"第{idx}条")
                 if not content:
                     logger.error(f"[{idx}] 获取评论内容失败")
                     continue
@@ -266,7 +266,7 @@ class PostOperator:
         """
         # llm配文
         if llm_text and not text:
-            text = await self.llm.generate_diary()
+            text = await self.llm.generate_diary(event_notify=event)
 
         # TODO:llm配图
         #if llm_images and not images:
@@ -333,16 +333,42 @@ class PostOperator:
         self.batch_running = True
         await event.send(event.plain_result(f"开始批量评论 {target_id} 的说说 {start}~{end}，间隔 {delay} 秒"))
 
-        for i in range(start, end + 1):
+        i = start
+        while i <= end:
             if not self.batch_running:
                 await event.send(event.plain_result("批量评论已停止"))
                 break
+            
             pos = i - 1
             # Fetch 1
-            succ, data = await self.qzone.get_feeds(target_id=target_id, pos=pos, num=1)
-            
-            if not succ or not data:
-                logger.warning(f"获取第 {i} 条说说失败，跳过")
+            try:
+                succ, data = await self.qzone.get_feeds(target_id=target_id, pos=pos, num=1)
+            except Exception as e:
+                logger.error(f"获取说说异常: {e}")
+                succ, data = False, {}
+
+            # Rate limit check logic for get_feeds
+            if not succ:
+                is_rate_limit = False
+                if isinstance(data, dict):
+                    if data.get("code") == -10000:
+                        is_rate_limit = True
+                    elif "使用人数过多" in str(data.get("message", "")):
+                        is_rate_limit = True
+                
+                if is_rate_limit:
+                    logger.warning(f"触发QQ空间风控，暂停任务 1 小时。当前进度: {i}")
+                    await event.send(event.plain_result(f"已经评论到第 {i-1} 条, 因qq空间风控暂停一小时后运行"))
+                    await asyncio.sleep(3600) # Sleep 1 hour
+                    continue # Retry current index
+                
+                logger.warning(f"获取第 {i} 条说说失败，跳过. Data: {data}")
+                i += 1 
+                continue
+
+            if not data:
+                logger.warning(f"第 {i} 条说说数据为空，跳过")
+                i += 1
                 continue
                 
             post = data[0]
@@ -356,10 +382,28 @@ class PostOperator:
 
             # Comment
             try:
-                content = await self.llm.generate_comment(post)
+                content = await self.llm.generate_comment(post, event_notify=event, index_info=f"第{i}条")
                 if content:
-                    await self.qzone.comment(fid=post.tid, target_id=str(post.uin), content=content)
-                    logger.info(f"[{i}] 评论成功: {content}")
+                    c_succ, c_data = await self.qzone.comment(fid=post.tid, target_id=str(post.uin), content=content)
+                    
+                    if not c_succ:
+                        # Check for rate limit in comment response
+                        is_rate_limit = False
+                        if isinstance(c_data, dict):
+                            if c_data.get("code") == -10000:
+                                is_rate_limit = True
+                            elif "使用人数过多" in str(c_data.get("message", "")):
+                                is_rate_limit = True
+                        
+                        if is_rate_limit:
+                             logger.warning(f"评论时触发QQ空间风控，暂停任务 1 小时。当前进度: {i}")
+                             await event.send(event.plain_result(f"已经评论到第 {i-1} 条, 因qq空间风控暂停一小时后运行"))
+                             await asyncio.sleep(3600)
+                             continue # Retry current index (re-fetch, re-like, re-comment)
+                        
+                        logger.warning(f"[{i}] 评论失败: {c_data}")
+                    else:
+                        logger.info(f"[{i}] 评论成功: {content}")
                 else:
                     logger.warning(f"[{i}] 生成评论失败")
             except Exception as e:
@@ -368,6 +412,8 @@ class PostOperator:
             # Wait
             if i < end:
                 await asyncio.sleep(delay)
+            
+            i += 1
         
         await event.send(event.plain_result("批量评论任务结束"))
 

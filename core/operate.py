@@ -63,7 +63,7 @@ class PostOperator:
             logger.error("获取不到用户ID")
             return []
 
-        if int(target_id) in self.config.ignore_users:  # 忽略用户
+        if str(target_id) in self.config.ignore_users:  # 忽略用户
             logger.warning(f"已忽略用户（{target_id}）的QQ空间")
             return []
 
@@ -224,7 +224,7 @@ class PostOperator:
                 comment = Comment(
                     uin=self.qzone.ctx.uin,
                     nickname=bot_name,
-                    content=content, # type: ignore
+                    content=content,  # type: ignore
                     create_time=int(time.time()),
                     tid=0,
                     parent_tid=None,
@@ -235,7 +235,7 @@ class PostOperator:
                 if event:
                     img_path = await post.to_image(self.style)
                     if send_admin:
-                        event.message_obj.group_id = None # type: ignore
+                        event.message_obj.group_id = None  # type: ignore
                         event.message_obj.sender.user_id = self.admin_id
                     await event.send(event.image_result(img_path))
 
@@ -267,7 +267,7 @@ class PostOperator:
             text = await self.llm.generate_diary()
 
         # TODO:llm配图
-        #if llm_images and not images:
+        # if llm_images and not images:
         # images = await self.llm.generate_images(text, self.per_qzone_num)
 
         if not post:
@@ -301,7 +301,6 @@ class PostOperator:
         if event:
             img_path = await post.to_image(self.style)
             await event.send(event.image_result(img_path))
-
 
     # async def reply_comment(self, event: AiocqhttpMessageEvent):
     #     """

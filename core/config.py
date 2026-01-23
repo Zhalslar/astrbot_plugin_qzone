@@ -1,7 +1,7 @@
 # config.py
 from __future__ import annotations
 
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Iterable, Mapping, MutableMapping
 from pathlib import Path
 from types import MappingProxyType, UnionType
 from typing import Any, Union, get_args, get_origin, get_type_hints
@@ -132,3 +132,21 @@ class PluginConfig(ConfigNode):
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.style_dir = Path(self.pillowmd_style_dir).resolve()
         self.db_path = self.data_dir / f"posts_{self._DB_VERSION}.db"
+        self.ignore_groups = self._normalize_id_list(self.ignore_groups)
+        self.ignore_users = self._normalize_id_list(self.ignore_users)
+        self.save_config()
+
+    @staticmethod
+    def _normalize_id_list(values: Iterable) -> list[str]:
+        """
+        将任意可迭代对象中的元素：
+        - 转为 str
+        - 只保留数字
+        - 过滤空字符串
+        """
+        result: list[str] = []
+        for v in values or []:
+            s = "".join(filter(str.isdigit, str(v)))
+            if s:
+                result.append(s)
+        return result

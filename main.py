@@ -124,15 +124,18 @@ class QzonePlugin(Star):
         """
         if not self.operator:
             return
+
         at_ids = get_ats(event)
-        get_recent = not at_ids
+        if at_ids:
+            get_recent = False
+            # 把本次要查看的用户从忽略列表中移除
+            for uid in {event.get_sender_id(), *at_ids}:
+                if str(uid) in self.cfg.ignore_users:
+                    self.cfg.ignore_users.remove(uid)
+            self.cfg.save_config()
+        else:
+            get_recent = True
 
-        # 把本次要查看的用户从忽略列表中移除
-        for uid in {event.get_sender_id(), *at_ids}:
-            if int(uid) in self.cfg.ignore_users:
-                self.cfg.ignore_users.remove(uid)
-
-        self.cfg.save_config()
         await self.operator.view_feed(event, get_recent=get_recent)
 
     @filter.command("读说说", alias={"评论说说", "评说说"})

@@ -4,7 +4,6 @@ import json
 import re
 import typing
 from datetime import datetime
-from pathlib import Path
 
 import aiosqlite
 import pydantic
@@ -12,6 +11,7 @@ import pydantic
 from astrbot.core.star.star_tools import StarTools
 
 from .comment import Comment
+from .config import PluginConfig
 
 post_key = typing.Literal[
     "id",
@@ -181,8 +181,8 @@ class PostDB:
         "extra_text",
     }
 
-    def __init__(self, db_path: Path):
-        self.db_path = db_path
+    def __init__(self, config: PluginConfig):
+        self.db_path = config.db_path
 
     @staticmethod
     def _row_to_post(row) -> Post:

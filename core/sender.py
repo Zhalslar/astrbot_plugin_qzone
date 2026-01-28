@@ -31,7 +31,7 @@ class Sender:
         if self.style:
             img = await self.style.AioRender(text=post_text, useImageUrl=True)
             img_path = img.Save(self.cfg.cache_dir)
-            return Image(str(img_path))
+            return Image.fromFileSystem(str(img_path))
         else:
             return Plain(post_text)
 

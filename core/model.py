@@ -17,6 +17,8 @@ def extract_and_replace_nickname(input_string):
         pairs = content[1:-1].split(",")
         nick_value = ""
         for pair in pairs:
+            if ":" not in pair:
+                continue
             key, value = pair.split(":", 1)
             if key.strip() == "nick":
                 nick_value = value.strip()

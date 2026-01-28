@@ -89,7 +89,7 @@ class Qzone:
                 if not cookie_str:
                     raise RuntimeError("获取 Cookie 失败")
                 # 更新 Cookie 配置
-                self.cfg.updata_cookies(cookie_str)
+                self.cfg.update_cookies(cookie_str)
 
             c = {k: v.value for k, v in SimpleCookie(cookie_str).items()}
             uin = int(c.get("uin", "0")[1:])

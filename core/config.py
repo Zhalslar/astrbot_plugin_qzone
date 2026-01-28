@@ -187,13 +187,13 @@ class PluginConfig(ConfigNode):
             self.source.ignore_groups,
             self.source.ignore_users,
         ]:
-            for id in ids:
-                if not isinstance(id, str):
-                    str_id = str(id)
-                    ids.remove(id)
-                    ids.append(str_id)
-                elif not id.isdigit():
-                    ids.remove(id)
+            normalized = []
+            for raw in ids:
+                s = str(raw)
+                if s.isdigit():
+                    normalized.append(s)
+            ids.clear()
+            ids.extend(normalized)
 
     def append_ignore_users(self, uid: str | list[str]):
         uids = [uid] if isinstance(uid, str) else uid
@@ -209,6 +209,6 @@ class PluginConfig(ConfigNode):
                 self.source.ignore_users.remove(str(uid))
         self.save_config()
 
-    def updata_cookies(self, cookies_str: str):
+    def update_cookies(self, cookies_str: str):
         self.cookies_str = cookies_str
         self.save_config()

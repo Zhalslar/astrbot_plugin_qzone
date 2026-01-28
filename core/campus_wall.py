@@ -1,76 +1,22 @@
 from astrbot.api import logger
-from astrbot.core.message.components import BaseMessageComponent, Image, Plain
-from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 
 from .config import PluginConfig
-from .post import Post, PostDB
+from .db import PostDB
+from .model import Post
 from .qzone_api import Qzone
+from .sender import Sender
 from .utils import get_image_urls
 
 
 class CampusWall:
-    def __init__(self, config: PluginConfig, qzone: Qzone, db: PostDB, style):
+    def __init__(self, config: PluginConfig, qzone: Qzone, db: PostDB, sender: Sender):
         self.cfg = config
         self.qzone = qzone
         self.db = db
-        self.style = style
-
-    async def notice_admin(
-        self, event: AiocqhttpMessageEvent, chain: list[BaseMessageComponent]
-    ):
-        """通知管理群或管理员"""
-        client = event.bot
-        obmsg = await event._parse_onebot_json(MessageChain(chain))
-
-        async def send_to_admins():
-            for admin_id in self.cfg.admins_id:
-                if admin_id.isdigit():
-                    try:
-                        await client.send_private_msg(
-                            user_id=int(admin_id), message=obmsg
-                        )
-                    except Exception as e:
-                        logger.error(f"无法反馈管理员：{e}")
-
-        if self.cfg.manage_group:
-            try:
-                await client.send_group_msg(
-                    group_id=int(self.cfg.manage_group), message=obmsg
-                )
-            except Exception as e:
-                logger.error(f"无法反馈管理群：{e}")
-                await send_to_admins()
-        elif self.cfg.admins_id:
-            await send_to_admins()
-
-    async def notice_user(
-        self,
-        event: AiocqhttpMessageEvent,
-        chain: list[BaseMessageComponent],
-        group_id: int = 0,
-        user_id: int = 0,
-    ):
-        """通知投稿者"""
-        client = event.bot
-        obmsg = await event._parse_onebot_json(MessageChain(chain))
-
-        async def send_to_user():
-            try:
-                await client.send_private_msg(user_id=int(user_id), message=obmsg)
-            except Exception as e:
-                logger.error(f"无法通知投稿者：{e}")
-
-        if group_id:
-            try:
-                await client.send_group_msg(group_id=int(group_id), message=obmsg)
-            except Exception as e:
-                logger.error(f"无法投稿者的群：{e}")
-                await send_to_user()
-        elif self.cfg.admins_id:
-            await send_to_user()
+        self.sender = sender
 
     @staticmethod
     def parse_input(input: str | int | None = None) -> list[int]:
@@ -103,18 +49,21 @@ class CampusWall:
             anon=False,
             status="pending",
         )
-        await post.save(self.db)
-        # 渲染图片
-        img_path = await post.to_image(self.style)
-        img_seg = Image.fromFileSystem(img_path)
+        await self.db.save(post)
 
         # 通知投稿者
-        chain = [Plain("已投，等待审核..."), img_seg]
-        await event.send(event.chain_result(chain))
+        await self.sender.send_post(
+            post,
+            event=event,
+            message="已投，等待审核...",
+        )
 
         # 通知管理员
-        chain = [Plain(f"收到新投稿#{post.id}"), img_seg]
-        await self.notice_admin(event, chain)
+        await self.sender.send_admin_post(
+            post,
+            client=event.bot,
+            message=f"收到新投稿#{post.id}",
+        )
         event.stop_event()
 
     async def view(self, event: AiocqhttpMessageEvent, input: str | int | None = None):
@@ -124,13 +73,12 @@ class CampusWall:
             if not post:
                 await event.send(event.plain_result(f"稿件#{post_id}不存在"))
                 return
-            img_path = await post.to_image(self.style)
-            await event.send(event.image_result(img_path))
+            await self.sender.send_post(post, event=event)
 
     async def approve(
         self, event: AiocqhttpMessageEvent, input: str | int | None = None
     ):
-        """通过稿件 <稿件ID>, 默认最新稿件"""
+        """管理员命令：通过稿件 <稿件ID>, 默认最新稿件"""
         for post_id in self.parse_input(input):
             post = await self.db.get(post_id)
             if not post:
@@ -157,31 +105,30 @@ class CampusWall:
             post.tid = data.get("tid")
             post.create_time = data.get("now", 0)
             post.status = "approved"
-            await post.save(self.db)
-
-            # 渲染图片
-            img_path = await post.to_image(self.style)
-            img_seg = Image.fromFileSystem(str(img_path))
+            await self.db.save(post)
 
             # 通知管理员
-            chain = [Plain(f"已发布说说#{post_id}"), img_seg]
-            await event.send(event.chain_result(chain))
+            await self.sender.send_admin_post(
+                post,
+                client=event.bot,
+                message=f"已发布说说#{post_id}",
+            )
 
             # 通知投稿者
-            if str(post.uin) != event.get_self_id():
-                chain = [Plain(f"您的投稿#{post_id}已通过"), img_seg]
-                await self.notice_user(
-                    event,
-                    chain=chain,
-                    group_id=post.gin,
-                    user_id=post.uin,
+            if (
+                str(post.uin) != event.get_self_id()
+                and str(post.gin) != event.get_group_id()
+            ):
+                await self.sender.send_user_post(
+                    post,
+                    client=event.bot,
+                    message=f"您的投稿#{post_id}已通过",
                 )
-                logger.info(f"已发布说说#{post_id}")
 
     async def reject(
         self, event: AiocqhttpMessageEvent, input: str | int | None = None
     ):
-        """拒绝稿件 <稿件ID> <原因>"""
+        """管理员命令：拒绝稿件 <稿件ID> <原因>"""
         for post_id in self.parse_input(input):
             post = await self.db.get(post_id)
             if not post:
@@ -204,7 +151,7 @@ class CampusWall:
             post.status = "rejected"
             if reason:
                 post.extra_text = reason
-            await post.save(self.db)
+            await self.db.save(post)
 
             # 通知管理员
             admin_msg = f"已拒绝稿件#{post_id}"
@@ -213,21 +160,21 @@ class CampusWall:
             await event.send(event.plain_result(admin_msg))
 
             # 通知投稿者
-            if str(post.uin) != event.get_self_id():
+            if (
+                str(post.uin) != event.get_self_id()
+                and str(post.gin) != event.get_group_id()
+            ):
                 user_msg = f"您的投稿#{post_id}未通过"
                 if reason:
                     user_msg += f"\n理由：{reason}"
-                await self.notice_user(
-                    event,
-                    chain=[Plain(user_msg)],
-                    group_id=post.gin,
-                    user_id=post.uin,
+                await self.sender.send_user_post(
+                    post, client=event.bot, message=user_msg
                 )
 
     async def delete(
         self, event: AiocqhttpMessageEvent, input: str | int | None = None
     ):
-        """删除稿件 <稿件ID>"""
+        """管理员命令：删除稿件 <稿件ID>"""
         for post_id in self.parse_input(input):
             post = await self.db.get(post_id)
             if not post:

@@ -1,7 +1,7 @@
 name: astrbot_plugin_qzone
 display_name: QQ空间
-desc: QQ空间对接插件, 可自动发说说、点赞、评论，表白墙投稿审核
+desc: QQ空间对接插件, 支持查看/点赞/评论说说、自动发说说、AI写说说、表白墙投稿与审核等功能
 help: 略
-version: v2.2.9
+version: v2.3.0
 author: Zhalslar
 repo: https://github.com/Zhalslar/astrbot_plugin_qzone

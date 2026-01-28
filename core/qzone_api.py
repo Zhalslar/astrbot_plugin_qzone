@@ -11,12 +11,11 @@ from typing import Any
 import aiohttp
 import bs4
 import json5
-from aiocqhttp import CQHttp
 
 from astrbot.api import logger
 
-from .comment import Comment
-from .post import Post
+from .config import PluginConfig
+from .model import Comment, Post
 from .utils import normalize_images
 
 
@@ -56,6 +55,8 @@ class QzoneContext:
 class Qzone:
     """QQ 空间 HTTP API 封装"""
 
+    DOMAIN = "user.qzone.qq.com"
+
     BASE_URL = "https://user.qzone.qq.com"
     UPLOAD_IMAGE_URL = "https://up.qzone.qq.com/cgi-bin/upload/cgi_upload_image"
     EMOTION_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6"
@@ -68,21 +69,28 @@ class Qzone:
     DELETE_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_delete_v6"
     DETAIL_URL = "https://h5.qzone.qq.com/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_msgdetail_v6"
 
-
-    def __init__(self, client: CQHttp) -> None:
+    def __init__(self, config: PluginConfig) -> None:
+        self.cfg = config
         self._session = aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(limit=100, ssl=False),
             timeout=aiohttp.ClientTimeout(total=10),
         )
-        self.client = client
         self.ctx: QzoneContext = None  # type: ignore
 
-    async def login(self) -> bool:
+    async def login(self, cookies_str: str | None = None) -> bool:
         logger.info("正在登录QQ空间...")
         try:
-            cookie_str = (
-                await self.client.get_cookies(domain="user.qzone.qq.com")
-            ).get("cookies", "")
+            if not cookies_str:
+                if not self.cfg.client:
+                    raise RuntimeError("CQHttp 实例不存在")
+                cookie_str = (
+                    await self.cfg.client.get_cookies(domain=self.DOMAIN)
+                ).get("cookies")
+                if not cookie_str:
+                    raise RuntimeError("获取 Cookie 失败")
+                # 更新 Cookie 配置
+                self.cfg.updata_cookies(cookie_str)
+
             c = {k: v.value for k, v in SimpleCookie(cookie_str).items()}
             uin = int(c.get("uin", "0")[1:])
             if not uin:
@@ -99,7 +107,7 @@ class Qzone:
     async def ready(self):
         """准备好登录状态"""
         if not self.ctx:
-            await self.login()
+            await self.login(self.cfg.cookies_str)
 
     async def _request(
         self,
@@ -211,7 +219,7 @@ class Qzone:
                 "referer": f"{self.BASE_URL}/{self.ctx.uin}",
                 "origin": self.BASE_URL,
             },
-            timeout=60
+            timeout=60,
         )
 
         if not succ:

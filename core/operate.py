@@ -4,37 +4,32 @@ from astrbot.api import logger
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
-from astrbot.core.star.context import Context
 
-from .comment import Comment
 from .config import PluginConfig
+from .db import PostDB
 from .llm_action import LLMAction
-from .post import Post, PostDB
+from .model import Comment, Post
 from .qzone_api import Qzone
+from .sender import Sender
 from .utils import get_ats, get_nickname
 
 
 class PostOperator:
     def __init__(
         self,
-        context: Context,
         config: PluginConfig,
         qzone: Qzone,
         db: PostDB,
         llm: LLMAction,
-        style,
+        sender: Sender,
     ):
-        self.context = context
-        self.config = config
+        self.cfg = config
         self.qzone = qzone
         self.db = db
         self.llm = llm
-        self.style = style
+        self.sender = sender
         self.uin = 0
         self.name = "我"
-        # 获取唯一管理员
-        self.admin_ids: list[str] = context.get_config().get("admins_id", [])
-        self.admin_id = next(aid for aid in self.admin_ids if aid.isdigit())
 
     # ------------------------ 公共 pipeline ------------------------ #
     async def _pipeline(
@@ -63,7 +58,7 @@ class PostOperator:
             logger.error("获取不到用户ID")
             return []
 
-        if str(target_id) in self.config.ignore_users:  # 忽略用户
+        if self.cfg.source.is_ignore_user(target_id):
             logger.warning(f"已忽略用户（{target_id}）的QQ空间")
             return []
 
@@ -103,11 +98,11 @@ class PostOperator:
             if isinstance(data, dict):
                 if code := data.get("code"):
                     if code in [-10031]:
-                        self.config.ignore_users.append(str(target_id))
+                        self.cfg.append_ignore_users(target_id)
                         logger.warning(
                             f"已将用户（{target_id}）添加到忽略列表，下次不再处理该用户的空间"
                         )
-                        self.config.save_config()
+                        self.cfg.save_config()
                 if event and send_error:
                     await event.send(
                         event.plain_result(data.get("message") or "获取不到说说")
@@ -140,7 +135,7 @@ class PostOperator:
 
         # 存到数据库
         for p in final_posts:
-            await p.save(self.db)
+            await self.db.save(p)
 
         return final_posts
 
@@ -153,8 +148,7 @@ class PostOperator:
         """
         posts: list[Post] = await self._pipeline(event, get_recent=get_recent)
         for post in posts:
-            img_path = await post.to_image(self.style)
-            await event.send(event.image_result(img_path))
+            await self.sender.send_post(post, event=event)
 
     async def read_feed(
         self,
@@ -164,7 +158,6 @@ class PostOperator:
         no_self=True,
         no_commented=True,
         send_error: bool = True,
-        send_admin: bool = False,
     ):
         """
         读说说 <序号/范围> 即点赞+评论说说
@@ -230,14 +223,10 @@ class PostOperator:
                     parent_tid=None,
                 )
                 post.comments.append(comment)
-                await post.save(self.db)
-                # 可视化
-                if event:
-                    img_path = await post.to_image(self.style)
-                    if send_admin:
-                        event.message_obj.group_id = None  # type: ignore
-                        event.message_obj.sender.user_id = self.admin_id
-                    await event.send(event.image_result(img_path))
+                await self.db.save(post)
+                await self.sender.send_post(
+                    post, event=event, send_admin=self.cfg.trigger.send_admin
+                )
 
         logger.info(f"执行完毕，点赞成功 {like_succ} 条，评论成功 {comment_succ} 条")
 
@@ -295,12 +284,10 @@ class PostOperator:
             if now := data.get("now", ""):
                 post.create_time = now
         # 落库
-        await post.save(self.db)
+        await self.db.save(post)
 
-        # 可视化
-        if event:
-            img_path = await post.to_image(self.style)
-            await event.send(event.image_result(img_path))
+        # 发送
+        await self.sender.send_post(post, event=event)
 
     # async def reply_comment(self, event: AiocqhttpMessageEvent):
     #     """

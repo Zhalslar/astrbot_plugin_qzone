@@ -6,18 +6,16 @@ from aiocqhttp import CQHttp
 
 from astrbot.api import logger
 from astrbot.core.provider.provider import Provider
-from astrbot.core.star.context import Context
 
 from .config import PluginConfig
-from .post import Post
+from .model import Post
 
 
 class LLMAction:
-    def __init__(self, context: Context, config: PluginConfig, client: CQHttp):
-        self.context = context
+    def __init__(self, config: PluginConfig):
         self.cfg = config
-        self.client = client
-
+        self.context = config.context
+        self.client = config.client
 
     def _build_context(
         self, round_messages: list[dict[str, Any]]
@@ -38,18 +36,18 @@ class LLMAction:
                 contexts.append({"role": "user", "content": text})
         return contexts
 
-    async def _get_msg_contexts(self, group_id: str) -> list[dict]:
+    async def _get_msg_contexts(self, client: CQHttp, group_id: str) -> list[dict]:
         """获取群聊历史消息"""
         message_seq = 0
         contexts: list[dict] = []
-        while len(contexts) < self.cfg.diary_max_msg:
+        while len(contexts) < self.cfg.source.diary_max_msg:
             payloads = {
                 "group_id": group_id,
                 "message_seq": message_seq,
                 "count": 200,
                 "reverseOrder": True,
             }
-            result: dict = await self.client.api.call_action(
+            result: dict = await client.api.call_action(
                 "get_group_msg_history", **payloads
             )
             round_messages = result["messages"]
@@ -70,30 +68,35 @@ class LLMAction:
             return diary[start:end].strip()
         return ""
 
-    async def generate_diary(self, group_id: str = "", topic: str | None = None) -> str | None:
+    async def generate_diary(
+        self, group_id: str = "", topic: str | None = None
+    ) -> str | None:
         """根据聊天记录生成日记"""
         provider = (
-            self.context.get_provider_by_id(self.cfg.diary_provider_id)
+            self.context.get_provider_by_id(self.cfg.llm.diary_provider_id)
             or self.context.get_using_provider()
         )
         if not isinstance(provider, Provider):
             logger.error("未配置用于文本生成任务的 LLM 提供商")
             return None
         contexts = []
-
+        if not self.client:
+            logger.error("未配置用于文本生成任务的 CQHTTP 客户端")
+            return None
         if group_id:
-            contexts = await self._get_msg_contexts(group_id)
+            contexts = await self._get_msg_contexts(self.client, group_id)
         else:  # 随机获取一个群组
             group_list = await self.client.get_group_list()
             group_ids = [
                 str(group["group_id"])
                 for group in group_list
-                if str(group["group_id"]) not in self.cfg.ignore_groups
+                if str(group["group_id"]) not in self.cfg.source.ignore_groups
             ]
             if not group_ids:
                 logger.warning("未找到可用群组")
                 return None
-            contexts = await self._get_msg_contexts(random.choice(group_ids))
+            group_id = random.choice(group_ids)
+            contexts = await self._get_msg_contexts(self.client, group_id)
         # TODO: 更多模式
 
         # 系统提示，要求使用三对双引号包裹正文
@@ -101,7 +104,7 @@ class LLMAction:
             f"# 写作主题：{topic or '从聊天内容中选一个主题'}\n\n"
             "# 输出格式要求：\n"
             '- 使用三对双引号（"""）将正文内容包裹起来。\n\n'
-            + self.cfg.diary_prompt
+            + self.cfg.llm.diary_prompt
         )
 
         logger.debug(f"{system_prompt}\n\n{contexts}")
@@ -121,7 +124,7 @@ class LLMAction:
     async def generate_comment(self, post: Post) -> str | None:
         """根据帖子内容生成评论"""
         provider = (
-            self.context.get_provider_by_id(self.cfg.comment_provider_id)
+            self.context.get_provider_by_id(self.cfg.llm.comment_provider_id)
             or self.context.get_using_provider()
         )
         if not isinstance(provider, Provider):
@@ -136,7 +139,7 @@ class LLMAction:
 
             logger.debug(prompt)
             llm_response = await provider.text_chat(
-                system_prompt=self.cfg.comment_prompt,
+                system_prompt=self.cfg.llm.comment_prompt,
                 prompt=prompt,
                 image_urls=post.images,
             )

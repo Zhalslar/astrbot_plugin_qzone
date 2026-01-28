@@ -7,7 +7,6 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 
 from astrbot.api import logger
-from astrbot.core.star.context import Context
 
 from .config import PluginConfig
 from .operate import PostOperator
@@ -23,12 +22,8 @@ class AutoRandomCronTask:
     子类只需实现 async do_task()。
     """
 
-    def __init__(self, context: Context, cron_expr: str, job_name: str):
-        tz = context.get_config().get("timezone")
-        self.timezone = (
-            zoneinfo.ZoneInfo(tz) if tz else zoneinfo.ZoneInfo("Asia/Shanghai")
-        )
-
+    def __init__(self, job_name: str, cron_expr: str, timezone: zoneinfo.ZoneInfo):
+        self.timezone = timezone
         self.scheduler = AsyncIOScheduler(timezone=self.timezone)
         self.scheduler.start()
 
@@ -96,13 +91,11 @@ class AutoRandomCronTask:
 class AutoComment(AutoRandomCronTask):
     def __init__(
         self,
-        context: Context,
         config: PluginConfig,
         operator: PostOperator,
     ):
         self.operator = operator
-        cron = config.comment_cron
-        super().__init__(context, cron, "AutoComment")
+        super().__init__("AutoComment", config.trigger.comment_cron, config.timezone)
 
     async def do_task(self):
         await self.operator.read_feed(get_recent=True)
@@ -114,10 +107,9 @@ class AutoComment(AutoRandomCronTask):
 
 
 class AutoPublish(AutoRandomCronTask):
-    def __init__(self, context: Context, config: PluginConfig, operator: PostOperator):
+    def __init__(self, config: PluginConfig, operator: PostOperator):
         self.operator = operator
-        cron = config.publish_cron
-        super().__init__(context, cron, "AutoPublish")
+        super().__init__("AutoPublish", config.trigger.publish_cron, config.timezone)
 
     async def do_task(self):
         await self.operator.publish_feed(llm_text=True)

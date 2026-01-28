@@ -83,15 +83,15 @@ class Qzone:
             if not cookies_str:
                 if not self.cfg.client:
                     raise RuntimeError("CQHttp 实例不存在")
-                cookie_str = (
+                cookies_str = (
                     await self.cfg.client.get_cookies(domain=self.DOMAIN)
                 ).get("cookies")
-                if not cookie_str:
+                if not cookies_str:
                     raise RuntimeError("获取 Cookie 失败")
                 # 更新 Cookie 配置
-                self.cfg.update_cookies(cookie_str)
+                self.cfg.update_cookies(cookies_str)
 
-            c = {k: v.value for k, v in SimpleCookie(cookie_str).items()}
+            c = {k: v.value for k, v in SimpleCookie(cookies_str).items()}
             uin = int(c.get("uin", "0")[1:])
             if not uin:
                 raise RuntimeError("Cookie 中缺少合法 uin")

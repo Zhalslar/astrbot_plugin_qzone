@@ -142,12 +142,13 @@ class TriggerConfig(ConfigNode):
 
 class PluginConfig(ConfigNode):
     manage_group: str
+    pillowmd_style_dir: str
     llm: LLMConfig
     source: SourceConfig
     trigger: TriggerConfig
     cookies_str: str
     timeout: int
-    pillowmd_style_dir: str
+    show_name: bool
 
     _DB_VERSION = 4
 

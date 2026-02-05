@@ -39,7 +39,7 @@ class QzonePlugin(Star):
         # 操作服务
         self.service = PostService(self.qzone, self.session, self.db, self.llm)
         # 表白墙
-        self.campus_wall = CampusWall(self.service, self.db, self.sender)
+        self.campus_wall = CampusWall(self.cfg, self.service, self.db, self.sender)
         # 自动评论模块
         self.auto_comment: AutoComment | None = None
         # 自动发说说模块
@@ -68,7 +68,6 @@ class QzonePlugin(Star):
                 shutil.rmtree(self.cfg.cache_dir)
             except Exception as e:
                 logger.error(f"清理缓存失败: {e}")
-
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     async def prob_read_feed(self, event: AiocqhttpMessageEvent):
@@ -219,6 +218,11 @@ class QzonePlugin(Star):
     async def contribute_post(self, event: AiocqhttpMessageEvent):
         """投稿 <内容> <图片>"""
         await self.campus_wall.contribute(event)
+
+    @filter.command("匿名投稿")
+    async def anon_contribute_post(self, event: AiocqhttpMessageEvent):
+        """匿名投稿 <内容> <图片>"""
+        await self.campus_wall.contribute(event, anon=True)
 
     @filter.command("撤稿")
     async def recall_post(self, event: AiocqhttpMessageEvent):

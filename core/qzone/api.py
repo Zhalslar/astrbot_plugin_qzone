@@ -188,18 +188,32 @@ class QzoneAPI(QzoneHttpClient):
                 "topicId": f"{post.uin}_{post.tid}__1",
                 "uin": ctx.uin,
                 "hostUin": post.uin,
-                "content": f"回复 {comment.nickname}: {content}",
-                "format": "fs",
+                "feedsType": 100,
+                "inCharset": "utf-8",
+                "outCharset": "utf-8",
                 "plat": "qzone",
                 "source": "ic",
                 "platformid": 52,
+                "format": "fs",
                 "ref": "feeds",
-                "richtype": "",
-                "richval": "",
-                "paramstr": f"@{comment.nickname}",
+                "content": content,
+                "commentId": comment.tid,
+                "commentUin": comment.uin,
+                "richval": "",  # 富文本内容
+                "richtype": "",  # 富文本类型
+                "private": "0",  # 是否私密评论
+                "paramstr": "2",
+                "qzreferrer": f"https://user.qzone.qq.com/{ctx.uin}/main",  # 来源页
             },
             headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-site",
+                "TE": "trailers",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+                "Referer": "https://user.qzone.qq.com/",
+                "Origin": "https://user.qzone.qq.com",
             },
         )
         return ApiResponse.from_raw(raw)
@@ -313,4 +327,3 @@ class QzoneAPI(QzoneHttpClient):
             },
         )
         return ApiResponse.from_raw(raw)
-

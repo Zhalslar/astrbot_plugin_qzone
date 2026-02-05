@@ -167,6 +167,18 @@ class QzonePlugin(Star):
             await self.service.like_posts(post)
             await self.sender.send_post(event, post, message="已点赞")
 
+    @filter.command("回复评论", alias={"回评"})
+    async def reply_comment(self, event: AiocqhttpMessageEvent):
+        """回复评论 <序号/范围> <内容>"""
+        posts = await self._get_posts(event)
+        for post in posts:
+            try:
+                await self.service.reply_comment(post, index=-1)
+                await self.sender.send_post(event, post, message="已回复评论")
+            except Exception as e:
+                await event.send(event.plain_result(str(e)))
+                logger.error(e)
+
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("删说说")
     async def delete_feed(self, event: AiocqhttpMessageEvent):

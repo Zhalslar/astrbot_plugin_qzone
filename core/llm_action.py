@@ -6,7 +6,7 @@ from astrbot.api import logger
 from astrbot.core.provider.provider import Provider
 
 from .config import PluginConfig
-from .model import Post
+from .model import Comment, Post
 
 
 class LLMAction:
@@ -147,6 +147,35 @@ class LLMAction:
             )
             logger.info(f"LLM 生成的评论：{comment}")
             return comment
+
+        except Exception as e:
+            raise ValueError(f"LLM 调用失败：{e}")
+
+    async def generate_reply(self,post: Post, comment: Comment) -> str | None:
+        """根据评论内容生成回复"""
+        provider = (
+            self.context.get_provider_by_id(self.cfg.llm.reply_provider_id)
+            or self.context.get_using_provider()
+        )
+        if not isinstance(provider, Provider):
+            logger.error("未配置用于文本生成任务的 LLM 提供商")
+            return None
+        try:
+            content = post.text
+            if post.rt_con:  # 转发文本
+                content += f"\n[转发]\n{post.rt_con}"
+
+            prompt = f"\n## 帖子内容\n{content}"
+            prompt += f"\n## 要回复的评论\n{comment.nickname}：{comment.content}"
+            logger.debug(prompt)
+            llm_response = await provider.text_chat(
+                system_prompt=self.cfg.llm.reply_prompt, prompt=prompt
+            )
+            reply = re.sub(r"[\s\u3000]+", "", llm_response.completion_text).rstrip(
+                "。"
+            )
+            logger.info(f"LLM 生成的回复：{reply}")
+            return reply
 
         except Exception as e:
             raise ValueError(f"LLM 调用失败：{e}")

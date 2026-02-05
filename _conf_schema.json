@@ -15,19 +15,6 @@
         "type": "object",
         "hint": "",
         "items": {
-            "comment_provider_id": {
-                "description": "评论说说用的LLM提供商",
-                "hint": "留空或者填写的提供商不存在时, 则使用当前正在使用的LLM提供商",
-                "type": "string",
-                "default": "",
-                "_special": "select_provider"
-            },
-            "comment_prompt": {
-                "description": "评论说说的llm提示词",
-                "type": "text",
-                "hint": "强烈建议自行根据Bot人格进行改写, 从而达到更好的效果",
-                "default": "生成一句简短、直接、贴题、犀利的评论, 不要解释、不做自我描述、不分选项"
-            },
             "post_provider_id": {
                 "description": "写说说用的LLM提供商",
                 "hint": "留空或者填写的提供商不存在时, 则使用当前正在使用的LLM提供商",
@@ -36,10 +23,36 @@
                 "_special": "select_provider"
             },
             "post_prompt": {
-                "description": "写说说时用的llm提示词",
+                "description": "写说说用的llm提示词",
                 "type": "text",
                 "hint": "强烈建议自行根据Bot人格进行改写, 从而达到更好的效果",
                 "default": "## 找出一个你感兴趣的主题来写一个段落。要求：- 首句抛出一个备受争议的问题。- 必须围绕抛出的问题进行展开, 无关内容不要硬塞。- 剖析问题后不做总结, 而是留下个更深层次的叩问。- 充满思辨, 保证逻辑性。- 每个单句都换行, 方便阅读"
+            },
+            "comment_provider_id": {
+                "description": "评论说说用的LLM提供商",
+                "hint": "留空或者填写的提供商不存在时, 则使用当前正在使用的LLM提供商",
+                "type": "string",
+                "default": "",
+                "_special": "select_provider"
+            },
+            "comment_prompt": {
+                "description": "评论说说用的llm提示词",
+                "type": "text",
+                "hint": "强烈建议自行根据Bot人格进行改写, 从而达到更好的效果",
+                "default": "生成一句简短、直接、贴题、犀利的评论, 不要解释、不做自我描述、不分选项"
+            },
+            "reply_provider_id": {
+                "description": "回复评论用的LLM提供商",
+                "hint": "留空或者填写的提供商不存在时, 则使用当前正在使用的LLM提供商",
+                "type": "string",
+                "default": "",
+                "_special": "select_provider"
+            },
+            "reply_prompt": {
+                "description": "回复评论用的llm提示词",
+                "type": "text",
+                "hint": "强烈建议自行根据Bot人格进行改写, 从而达到更好的效果",
+                "default": "这条帖子收到了一条评论，请回复此条评论, 不要解释、不做自我描述、不分选项"
             }
         }
     },

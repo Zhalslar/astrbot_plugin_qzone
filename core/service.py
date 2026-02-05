@@ -1,4 +1,3 @@
-# core/operate.py
 import time
 
 from astrbot.api import logger
@@ -11,9 +10,7 @@ from .qzone import QzoneAPI, QzoneParser, QzoneSession
 
 class PostService:
     """
-    Application Service 层（兼容版）：
-    - 新接口：纯业务、无 event
-    - 旧接口：仅作为 wrapper，保证不崩
+    Application Service 层
     """
 
     def __init__(
@@ -29,7 +26,7 @@ class PostService:
         self.llm = llm
 
     # ============================================================
-    # 一、纯业务接口（推荐使用）
+    # 业务接口
     # ============================================================
 
     async def query_feeds(
@@ -38,6 +35,7 @@ class PostService:
         target_id: str | None = None,
         pos: int = 0,
         num: int = 1,
+        with_detail: bool = False,
         no_self: bool = False,
         no_commented: bool = False,
     ) -> list[Post]:
@@ -54,14 +52,20 @@ class PostService:
             resp = await self.qzone.get_recent_feeds()
             if not resp.ok:
                 raise RuntimeError(resp.message)
-            posts: list[Post] = QzoneParser.parse_recent_feeds(resp.data)[pos : pos + num]
+            posts: list[Post] = QzoneParser.parse_recent_feeds(resp.data)[
+                pos : pos + num
+            ]
             if not posts:
                 raise RuntimeError("查询结果为空")
-
 
         if no_self:
             uin = await self.session.get_uin()
             posts = [p for p in posts if p.uin != uin]
+
+        if with_detail:
+            posts = await self._fill_post_detail(posts)
+            if not posts:
+                raise RuntimeError("获取详情后无有效说说")
 
         if no_commented:
             posts = await self._filter_not_commented(posts)
@@ -71,70 +75,134 @@ class PostService:
 
         return posts
 
-    async def _filter_not_commented(self, posts: list[Post]) -> list[Post]:
+    async def _fill_post_detail(self, posts: list[Post]) -> list[Post]:
         result: list[Post] = []
+
         for post in posts:
             resp = await self.qzone.get_detail(post)
-            if not resp.ok:
-                logger.warning(f"获取详情异常：{resp.data}")
+            if not resp.ok or not resp.data:
+                logger.warning(f"获取详情失败：{resp.data}")
                 continue
-            if not resp.data:
+
+            parsed = QzoneParser.parse_feeds([resp.data])
+            if not parsed:
+                logger.warning(f"解析详情失败：{resp.data}")
                 continue
-            posts = QzoneParser.parse_feeds([resp.data])
-            if not posts:
-                logger.warning(f"解析详情异常：{resp.data}")
-                continue
-            post = posts[0]
-            uin = await self.session.get_uin()
+
+            result.append(parsed[0])
+
+        return result
+
+    async def _filter_not_commented(self, posts: list[Post]) -> list[Post]:
+        result: list[Post] = []
+        uin = await self.session.get_uin()
+
+        for post in posts:
+            # 如果已经有 comments，说明是 detail post
+            if not post.comments:
+                resp = await self.qzone.get_detail(post)
+                if not resp.ok or not resp.data:
+                    continue
+                parsed = QzoneParser.parse_feeds([resp.data])
+                if not parsed:
+                    continue
+                post = parsed[0]
+
             if any(c.uin == uin for c in post.comments):
                 continue
+
             result.append(post)
+
         return result
 
     # ==================== 对外接口 ========================
 
+    async def view_visitor(self) -> str:
+        """查看访客"""
+        resp = await self.qzone.get_visitor()
+        if not resp.ok:
+            raise RuntimeError(f"获取访客异常：{resp.data}")
+        if not resp.data:
+            raise RuntimeError("无访客记录")
+        return QzoneParser.parse_visitors(resp.data)
+
     async def like_posts(self, post: Post):
         """点赞帖子"""
         if not post.tid:
-            logger.warning("帖子 tid 为空")
-            return
-        try:
-            await self.qzone.like(post)
-            logger.info(f"已点赞 → {post.name}")
-        except Exception as e:
-            logger.warning(f"点赞异常：{e}")
+            raise ValueError("帖子 tid 为空")
+        await self.qzone.like(post)
+        logger.info(f"已点赞 → {post.name}")
+
 
     async def comment_posts(self, post: Post):
         """评论帖子"""
         if not post.tid:
-            logger.warning("帖子 tid 为空")
-            return
-        try:
-            content = await self.llm.generate_comment(post)
-            if not content:
-                logger.warning("生成评论内容为空")
-                return
+            raise ValueError("帖子 tid 为空")
 
-            await self.qzone.comment(post, content)
+        content = await self.llm.generate_comment(post)
+        if not content:
+            raise ValueError("生成评论内容为空")
 
-            uin = await self.session.get_uin()
-            name = await self.session.get_nickname()
-            post.comments.append(
-                Comment(
-                    uin=uin,
-                    nickname=name,
-                    content=content,
-                    create_time=int(time.time()),
-                    tid=0,
-                    parent_tid=None,
-                )
+        await self.qzone.comment(post, content)
+
+        uin = await self.session.get_uin()
+        name = await self.session.get_nickname()
+        post.comments.append(
+            Comment(
+                uin=uin,
+                nickname=name,
+                content=content,
+                create_time=int(time.time()),
+                tid=0,
+                parent_tid=None,
             )
-            await self.db.save(post)
+        )
+        await self.db.save(post)
+        logger.info(f"评论 → {post.name}")
 
-            logger.info(f"评论 → {post.name}")
+    async def reply_comment(self, post: Post, index: int):
+        """回复评论（自动排除自己的评论）"""
 
-        except Exception as e:
-            logger.warning(f"评论异常：{e}")
+        if not post.tid:
+            raise ValueError("帖子 tid 为空")
+
+        uin = await self.session.get_uin()
+
+        # 排除自己的评论
+        other_comments = [c for c in post.comments if c.uin != uin]
+        n = len(other_comments)
+
+        if n == 0:
+            raise ValueError("没有可回复的评论")
+
+        # 校验索引（基于过滤后的列表）
+        if not (-n <= index < n):
+            raise ValueError(f"索引越界, 当前仅有 {n} 条可回复评论")
+
+        comment = other_comments[index]
+
+        # 生成回复
+        content = await self.llm.generate_reply(post, comment)
+        if not content:
+            raise ValueError("生成回复内容为空")
+
+        # 发回复
+        resp = await self.qzone.reply(post, comment, content)
+        if not resp.ok:
+            raise RuntimeError(resp.message)
+
+        # 本地回填
+        name = await self.session.get_nickname()
+        post.comments.append(
+            Comment(
+                uin=uin,
+                nickname=name,
+                content=content,
+                create_time=int(time.time()),
+                parent_tid=comment.tid,
+            )
+        )
+        await self.db.save(post)
 
     async def publish_post(
         self,
@@ -177,16 +245,7 @@ class PostService:
     async def delete_post(self, post: Post):
         """删除帖子"""
         if not post.tid:
-            return
+            raise ValueError("帖子 tid 为空")
         await self.qzone.delete(post.tid)
         if post.id:
             await self.db.delete(post.id)
-
-    async def view_visitor(self) -> str:
-        """查看访客"""
-        resp = await self.qzone.get_visitor()
-        if not resp.ok:
-            raise RuntimeError(f"获取访客异常：{resp.data}")
-        if not resp.data:
-            raise RuntimeError("无访客记录")
-        return QzoneParser.parse_visitors(resp.data)

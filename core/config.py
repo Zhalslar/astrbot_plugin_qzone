@@ -111,11 +111,12 @@ class ConfigNode:
 
 
 class LLMConfig(ConfigNode):
-    comment_provider_id: str
-    comment_prompt: str
     post_provider_id: str
     post_prompt: str
-
+    comment_provider_id: str
+    comment_prompt: str
+    reply_provider_id: str
+    reply_prompt: str
 
 class SourceConfig(ConfigNode):
     ignore_groups: list[str]

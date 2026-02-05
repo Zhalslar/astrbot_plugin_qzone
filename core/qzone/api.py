@@ -5,7 +5,7 @@ from typing import Any
 from astrbot.api import logger
 
 from ..config import PluginConfig
-from ..model import Post
+from ..model import Comment, Post
 from .client import QzoneHttpClient
 from .model import ApiResponse
 from .parser import QzoneParser
@@ -118,12 +118,7 @@ class QzoneAPI(QzoneHttpClient):
 
     async def like(self, post: Post) -> ApiResponse:
         """
-        点赞指定说说。
-
-        Args:
-            fid (str): 说说的动态ID。
-            target_id (str): 目标QQ号。
-
+        点赞指定说说
         """
         ctx = await self.session.get_ctx()
         raw = await self.request(
@@ -151,13 +146,7 @@ class QzoneAPI(QzoneHttpClient):
 
     async def comment(self, post: Post, content: str) -> ApiResponse:
         """
-        评论指定说说。
-
-        Args:
-            fid (str): 说说的动态ID。
-            target_id (str): 目标QQ号。
-            content (str): 评论的文本内容。
-
+        评论指定说说
         """
         ctx = await self.session.get_ctx()
         raw = await self.request(
@@ -183,17 +172,11 @@ class QzoneAPI(QzoneHttpClient):
 
     async def reply(
         self,
-        fid: str,
-        target_name: str,
+        post: Post,
+        comment: Comment,
         content: str,
     ) -> ApiResponse:
-        """
-        回复指定评论。(@昵称 + 内容)
-        Args:
-            fid (str): 说说的动态ID。
-            target_name (str): 目标QQ昵称。
-            content (str): 回复的文本内容。
-        """
+        """回复指定评论"""
         ctx = await self.session.get_ctx()
         raw = await self.request(
             "POST",
@@ -202,24 +185,41 @@ class QzoneAPI(QzoneHttpClient):
                 "g_tk": ctx.gtk2,
             },
             data={
-                "topicId": f"{ctx.uin}_{fid}__1",
+                "topicId": f"{post.uin}_{post.tid}__1",
                 "uin": ctx.uin,
-                "hostUin": ctx.uin,
-                "content": f"@{target_name} {content}",
-                "format": "fs",
+                "hostUin": post.uin,
+                "feedsType": 100,
+                "inCharset": "utf-8",
+                "outCharset": "utf-8",
                 "plat": "qzone",
                 "source": "ic",
                 "platformid": 52,
+                "format": "fs",
                 "ref": "feeds",
-                "richtype": "",
-                "richval": "",
-                "paramstr": f"@{target_name}",
+                "content": content,
+                "commentId": comment.tid,
+                "commentUin": comment.uin,
+                "richval": "",  # 富文本内容
+                "richtype": "",  # 富文本类型
+                "private": "0",  # 是否私密评论
+                "paramstr": "2",
+                "qzreferrer": f"https://user.qzone.qq.com/{ctx.uin}/main",  # 来源页
+            },
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-site",
+                "TE": "trailers",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+                "Referer": "https://user.qzone.qq.com/",
+                "Origin": "https://user.qzone.qq.com",
             },
         )
         return ApiResponse.from_raw(raw)
 
     async def delete(self, tid: str) -> ApiResponse:
-        """删除指定 tid 的说说"""
+        """删除指定说说"""
         ctx = await self.session.get_ctx()
         raw = await self.request(
             "POST",
@@ -285,13 +285,6 @@ class QzoneAPI(QzoneHttpClient):
     async def get_detail(self, post: Post) -> ApiResponse:
         """
         获取单条说说详情（含完整评论、转发、图片、视频等）
-
-        Args:
-            uin: 目标 QQ 号
-            tid: 说说 id（对应 msglist 里的 tid）
-
-        Returns:
-            (True, Post) 或 (False, 错误信息)
         """
         ctx = await self.session.get_ctx()
         raw = await self.request(
@@ -334,4 +327,3 @@ class QzoneAPI(QzoneHttpClient):
             },
         )
         return ApiResponse.from_raw(raw)
-

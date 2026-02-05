@@ -2,8 +2,6 @@ import random
 import re
 from typing import Any
 
-from aiocqhttp import CQHttp
-
 from astrbot.api import logger
 from astrbot.core.provider.provider import Provider
 
@@ -15,7 +13,6 @@ class LLMAction:
     def __init__(self, config: PluginConfig):
         self.cfg = config
         self.context = config.context
-        self.client = config.client
 
     def _build_context(
         self, round_messages: list[dict[str, Any]]
@@ -36,18 +33,20 @@ class LLMAction:
                 contexts.append({"role": "user", "content": text})
         return contexts
 
-    async def _get_msg_contexts(self, client: CQHttp, group_id: str) -> list[dict]:
+    async def _get_msg_contexts(self, group_id: str) -> list[dict]:
         """获取群聊历史消息"""
         message_seq = 0
         contexts: list[dict] = []
-        while len(contexts) < self.cfg.source.diary_max_msg:
+        if not self.cfg.client:
+            raise RuntimeError("客户端未初始化")
+        while len(contexts) < self.cfg.source.post_max_msg:
             payloads = {
                 "group_id": group_id,
                 "message_seq": message_seq,
                 "count": 200,
                 "reverseOrder": True,
             }
-            result: dict = await client.api.call_action(
+            result: dict = await self.cfg.client.api.call_action(
                 "get_group_msg_history", **payloads
             )
             round_messages = result["messages"]
@@ -59,34 +58,33 @@ class LLMAction:
         return contexts
 
     @staticmethod
-    def extract_content(diary: str) -> str:
+    def extract_content(raw: str) -> str:
         start_marker = '"""'
         end_marker = '"""'
-        start = diary.find(start_marker) + len(start_marker)
-        end = diary.find(end_marker, start)
+        start = raw.find(start_marker) + len(start_marker)
+        end = raw.find(end_marker, start)
         if start != -1 and end != -1:
-            return diary[start:end].strip()
+            return raw[start:end].strip()
         return ""
 
-    async def generate_diary(
+    async def generate_post(
         self, group_id: str = "", topic: str | None = None
     ) -> str | None:
-        """根据聊天记录生成日记"""
+        """生成帖子"""
         provider = (
-            self.context.get_provider_by_id(self.cfg.llm.diary_provider_id)
+            self.context.get_provider_by_id(self.cfg.llm.post_provider_id)
             or self.context.get_using_provider()
         )
         if not isinstance(provider, Provider):
-            logger.error("未配置用于文本生成任务的 LLM 提供商")
-            return None
-        contexts = []
-        if not self.client:
-            logger.error("未配置用于文本生成任务的 CQHTTP 客户端")
-            return None
+            raise RuntimeError("未配置用于文本生成任务的 LLM 提供商")
+
+        if not self.cfg.client:
+            raise RuntimeError("客户端未初始化")
+
         if group_id:
-            contexts = await self._get_msg_contexts(self.client, group_id)
+            contexts = await self._get_msg_contexts(group_id)
         else:  # 随机获取一个群组
-            group_list = await self.client.get_group_list()
+            group_list = await self.cfg.client.get_group_list()
             group_ids = [
                 str(group["group_id"])
                 for group in group_list
@@ -96,15 +94,14 @@ class LLMAction:
                 logger.warning("未找到可用群组")
                 return None
             group_id = random.choice(group_ids)
-            contexts = await self._get_msg_contexts(self.client, group_id)
+            contexts = await self._get_msg_contexts(group_id)
         # TODO: 更多模式
 
         # 系统提示，要求使用三对双引号包裹正文
         system_prompt = (
             f"# 写作主题：{topic or '从聊天内容中选一个主题'}\n\n"
             "# 输出格式要求：\n"
-            '- 使用三对双引号（"""）将正文内容包裹起来。\n\n'
-            + self.cfg.llm.diary_prompt
+            '- 使用三对双引号（"""）将正文内容包裹起来。\n\n' + self.cfg.llm.post_prompt
         )
 
         logger.debug(f"{system_prompt}\n\n{contexts}")
@@ -115,6 +112,8 @@ class LLMAction:
                 contexts=contexts,
             )
             diary = self.extract_content(llm_response.completion_text)
+            if not diary:
+                raise ValueError("LLM 生成的日记为空")
             logger.info(f"LLM 生成的日记：{diary}")
             return diary
 

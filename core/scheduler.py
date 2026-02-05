@@ -9,7 +9,7 @@ from apscheduler.triggers.date import DateTrigger
 from astrbot.api import logger
 
 from .config import PluginConfig
-from .operate import PostOperator
+from .service import PostService
 
 # ============================
 # 基类：随机偏移的周期任务
@@ -89,16 +89,18 @@ class AutoRandomCronTask:
 
 
 class AutoComment(AutoRandomCronTask):
-    def __init__(
-        self,
-        config: PluginConfig,
-        operator: PostOperator,
-    ):
-        self.operator = operator
-        super().__init__("AutoComment", config.trigger.comment_cron, config.timezone)
+    def __init__(self, config: PluginConfig, service: PostService):
+        cron = config.trigger.comment_cron
+        timezone = config.timezone
+        super().__init__("AutoComment", cron, timezone)
+        self.cfg = config
+        self.service = service
 
     async def do_task(self):
-        await self.operator.read_feed(get_recent=True)
+        posts = await self.service.query_feeds(pos=0, num=20)
+        await self.service.comment_posts(posts)
+        if self.cfg.trigger.like_when_comment:
+            await self.service.like_posts(posts)
 
 
 # ============================
@@ -107,9 +109,16 @@ class AutoComment(AutoRandomCronTask):
 
 
 class AutoPublish(AutoRandomCronTask):
-    def __init__(self, config: PluginConfig, operator: PostOperator):
-        self.operator = operator
-        super().__init__("AutoPublish", config.trigger.publish_cron, config.timezone)
+    def __init__(self, config: PluginConfig, service: PostService):
+        cron = config.trigger.publish_cron
+        timezone = config.timezone
+        super().__init__("AutoPublish", cron, timezone)
+        self.service = service
 
     async def do_task(self):
-        await self.operator.publish_feed(llm_text=True)
+        try:
+            text = await self.service.llm.generate_post()
+        except Exception as e:
+            logger.error(f"自动生成内容失败：{e}")
+            return
+        await self.service.publish_post(text=text)

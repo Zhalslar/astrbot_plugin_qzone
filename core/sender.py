@@ -3,6 +3,7 @@ from aiocqhttp import CQHttp
 from astrbot.api import logger
 from astrbot.core.message.components import BaseMessageComponent, Image, Plain
 from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
@@ -120,15 +121,12 @@ class Sender:
 
     async def send_post(
         self,
+        event: AstrMessageEvent,
         post: Post,
         *,
-        event: AiocqhttpMessageEvent | None = None,
         message: str = "",
         send_admin: bool = False,
     ):
-        if event is None:
-            return
-
         if send_admin and self.cfg.admin_id:
             event.message_obj.group_id = None  # type: ignore
             event.message_obj.sender.user_id = self.cfg.admin_id
@@ -151,7 +149,7 @@ class Sender:
 
     async def send_msg(
         self,
-        event: AiocqhttpMessageEvent,
+        event: AstrMessageEvent,
         message: str = "",
     ):
         chain = []

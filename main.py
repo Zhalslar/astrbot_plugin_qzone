@@ -220,6 +220,11 @@ class QzonePlugin(Star):
         """投稿 <内容> <图片>"""
         await self.campus_wall.contribute(event)
 
+    @filter.command("匿名投稿")
+    async def anon_contribute_post(self, event: AiocqhttpMessageEvent):
+        """匿名投稿 <内容> <图片>"""
+        await self.campus_wall.contribute(event, anon=True)
+
     @filter.command("撤稿")
     async def recall_post(self, event: AiocqhttpMessageEvent):
         """删除稿件 <稿件ID>"""

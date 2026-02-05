@@ -1,4 +1,3 @@
-
 import datetime as _dt
 import re
 from datetime import datetime
@@ -140,6 +139,12 @@ class Post(pydantic.BaseModel):
     class Config:
         json_encoders = {Comment: lambda c: c.model_dump()}
 
+    @property
+    def show_name(self):
+        if self.anon:
+            return "匿名者"
+        return extract_and_replace_nickname(self.name)
+
     def to_str(self) -> str:
         """把稿件信息整理成易读文本"""
         is_pending = self.status == "pending"
@@ -163,12 +168,9 @@ class Post(pydantic.BaseModel):
                     f"- **{remove_em_tags(comment.nickname)}**: {remove_em_tags(extract_and_replace_nickname(comment.content))}"
                 )
         if is_pending:
-            if self.anon:
-                lines.append(f"\n\n备注：稿件#{self.id}待审核, 投稿来自匿名者")
-            else:
-                lines.append(
-                    f"\n\n备注：稿件#{self.id}待审核, 投稿来自{self.name}({self.uin})"
-                )
+            name = "匿名者" if self.anon else f"{self.name}({self.uin})"
+            lines.append(f"\n\n备注：稿件#{self.id}待审核, 投稿来自{name}")
+
         return "\n".join(lines)
 
     def update(self, **kwargs):

@@ -21,11 +21,11 @@ class CampusWall:
         self.db = db
         self.sender = sender
 
-    async def contribute(self, event: AiocqhttpMessageEvent):
+    async def contribute(self, event: AiocqhttpMessageEvent, anon: bool = False):
         """投稿 <文字+图片>"""
         sender_name = event.get_sender_name()
-        raw_text = event.message_str.removeprefix("投稿").strip()
-        text = f"【来自 {sender_name} 的投稿】\n\n{raw_text}"
+        raw_text = event.message_str.partition(" ")[2]
+        text = f"{raw_text}"
         images = await get_image_urls(event)
         post = Post(
             uin=int(event.get_sender_id()),
@@ -33,7 +33,7 @@ class CampusWall:
             gin=int(event.get_group_id() or 0),
             text=text,
             images=images,
-            anon=False,
+            anon=anon,
             status="pending",
         )
         await self.db.save(post)
@@ -95,6 +95,8 @@ class CampusWall:
         if post.status == "approved":
             yield event.plain_result(f"稿件#{post.id}已通过，请勿重复通过")
             return
+
+        post.text = f"【来自 {post.show_name} 的投稿】\n\n{post.text}"
 
         # 发布说说
         try:

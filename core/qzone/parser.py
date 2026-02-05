@@ -28,6 +28,7 @@ def _safe_cell(text: str, max_len: int = 30) -> str:
         text = text[:max_len] + "…"
     return text or "-"
 
+
 class QzoneParser:
     """QQ 空间响应解析器"""
 
@@ -65,7 +66,6 @@ class QzoneParser:
 
         return data
 
-
     @staticmethod
     def parse_upload_result(payload: dict[str, Any]) -> tuple[str, str]:
         data = payload["data"]
@@ -101,19 +101,10 @@ class QzoneParser:
         lines: list[str] = []
 
         # ======================
-        # 统计（仍然是表格，但很简单）
-        # ======================
-        lines.append("### 访客统计\n")
-        lines.append("| 项目 | 数量 |")
-        lines.append("| --- | --- |")
-        lines.append(f"| 今日访客 | {data.get('todaycount', 0)} |")
-        lines.append(f"| 最近30天 | {data.get('totalcount', 0)} |")
-
-        # ======================
         # 明细表格
         # ======================
         lines.append("\n### 最近来访明细\n")
-        lines.append("| 时间 | 访客 | 来源 | 状态 | 备注 |")
+        lines.append("| 时间 | 访客 | 来源 | 状态 | 带来了 |")
         lines.append("| --- | --- | --- | --- | --- |")
 
         for v in items:
@@ -164,11 +155,17 @@ class QzoneParser:
                         if isinstance(n, str) and n.strip():
                             names.append(n)
                 if names:
-                    remark = _safe_cell("带来:" + ",".join(names), 30)
+                    remark = _safe_cell("、".join(names), 30)
 
             lines.append(
                 f"| {_safe_cell(dt, 16)} | {visitor} | {src} | {status} | {remark} |"
             )
+        # ======================
+        # 表格外统计（底下一行）
+        # ======================
+        today = data.get("todaycount", 0)
+        total = data.get("totalcount", 0)
+        lines.append(f"今日访客共 {today} 人， 最近30天访客共 {total} 人")
 
         return "\n".join(lines)
 

@@ -33,15 +33,6 @@ async def get_nickname(event: AiocqhttpMessageEvent, user_id) -> str:
         stranger_info = await event.bot.get_stranger_info(user_id=int(user_id))
         return stranger_info.get("nickname")
 
-async def get_login_name(self, event: AiocqhttpMessageEvent) -> str:
-    """获取bot的登录名"""
-    self_id = event.get_self_id()
-    try:
-        info = await event.bot.get_login_info()
-        return info.get("nickname") or self_id
-    except Exception:
-        return self_id
-
 
 def resolve_target_id(
     event: AiocqhttpMessageEvent,

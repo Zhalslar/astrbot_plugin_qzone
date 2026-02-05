@@ -43,17 +43,22 @@ class PostService:
     ) -> list[Post]:
         if target_id:
             resp = await self.qzone.get_feeds(target_id, pos=pos, num=num)
+            if not resp.ok:
+                raise RuntimeError(resp.message)
+            msglist = resp.data.get("msglist") or []
+            if not msglist:
+                raise RuntimeError("查询结果为空")
+            posts: list[Post] = QzoneParser.parse_feeds(msglist)
+
         else:
             resp = await self.qzone.get_recent_feeds()
-        if not resp.ok:
-            raise RuntimeError(resp.message)
+            if not resp.ok:
+                raise RuntimeError(resp.message)
+            posts: list[Post] = QzoneParser.parse_recent_feeds(resp.data)[pos : pos + num]
+            if not posts:
+                raise RuntimeError("查询结果为空")
+            posts: list[Post] = posts[pos : pos + num]
 
-        msglist = resp.data.get("msglist") or []
-        if not msglist:
-            raise RuntimeError("查询结果为空")
-
-        posts: list[Post] = msglist[pos : pos + num]
-        posts: list[Post] = QzoneParser.parse_feeds(msglist)
 
         if no_self:
             uin = await self.session.get_uin()

@@ -9,6 +9,7 @@ from apscheduler.triggers.date import DateTrigger
 from astrbot.api import logger
 
 from .config import PluginConfig
+from .sender import Sender
 from .service import PostService
 
 # ============================
@@ -89,18 +90,26 @@ class AutoRandomCronTask:
 
 
 class AutoComment(AutoRandomCronTask):
-    def __init__(self, config: PluginConfig, service: PostService):
+    def __init__(
+        self,
+        config: PluginConfig,
+        service: PostService,
+        sender: Sender,
+    ):
         cron = config.trigger.comment_cron
         timezone = config.timezone
         super().__init__("AutoComment", cron, timezone)
         self.cfg = config
         self.service = service
+        self.sender = sender
 
     async def do_task(self):
         posts = await self.service.query_feeds(pos=0, num=20)
-        await self.service.comment_posts(posts)
-        if self.cfg.trigger.like_when_comment:
-            await self.service.like_posts(posts)
+        for post in posts:
+            await self.service.comment_posts(post)
+            if self.cfg.trigger.like_when_comment:
+                await self.service.like_posts(post)
+            await self.sender.send_admin_post(post, message="定时读说说")
 
 
 # ============================
@@ -109,11 +118,17 @@ class AutoComment(AutoRandomCronTask):
 
 
 class AutoPublish(AutoRandomCronTask):
-    def __init__(self, config: PluginConfig, service: PostService):
+    def __init__(
+        self,
+        config: PluginConfig,
+        service: PostService,
+        sender: Sender,
+    ):
         cron = config.trigger.publish_cron
         timezone = config.timezone
         super().__init__("AutoPublish", cron, timezone)
         self.service = service
+        self.sender = sender
 
     async def do_task(self):
         try:
@@ -121,4 +136,5 @@ class AutoPublish(AutoRandomCronTask):
         except Exception as e:
             logger.error(f"自动生成内容失败：{e}")
             return
-        await self.service.publish_post(text=text)
+        post = await self.service.publish_post(text=text)
+        await self.sender.send_admin_post(post, message="定时发说说")

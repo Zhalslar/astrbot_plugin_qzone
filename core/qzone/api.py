@@ -108,13 +108,13 @@ class QzoneAPI(QzoneHttpClient):
                 richval="\t".join(richvals),
             )
 
-        data = await self.request(
+        raw = await self.request(
             "POST",
             self.EMOTION_URL,
             params={"g_tk": ctx.gtk2, "uin": ctx.uin},
             data=data,
         )
-        return ApiResponse.from_raw(data)
+        return ApiResponse.from_raw(raw)
 
     async def like(self, post: Post) -> ApiResponse:
         """
@@ -126,7 +126,7 @@ class QzoneAPI(QzoneHttpClient):
 
         """
         ctx = await self.session.get_ctx()
-        data = await self.request(
+        raw = await self.request(
             "POST",
             self.DOLIKE_URL,
             params={
@@ -147,7 +147,7 @@ class QzoneAPI(QzoneHttpClient):
                 "fupdate": 1,  # 更新标记
             },
         )
-        return ApiResponse.from_raw(data)
+        return ApiResponse.from_raw(raw)
 
     async def comment(self, post: Post, content: str) -> ApiResponse:
         """
@@ -160,7 +160,7 @@ class QzoneAPI(QzoneHttpClient):
 
         """
         ctx = await self.session.get_ctx()
-        data = await self.request(
+        raw = await self.request(
             "POST",
             self.COMMENT_URL,
             params={"g_tk": ctx.gtk2},
@@ -179,7 +179,7 @@ class QzoneAPI(QzoneHttpClient):
                 "content": content,  # 评论内容
             },
         )
-        return ApiResponse.from_raw(data)
+        return ApiResponse.from_raw(raw)
 
     async def reply(
         self,
@@ -195,7 +195,7 @@ class QzoneAPI(QzoneHttpClient):
             content (str): 回复的文本内容。
         """
         ctx = await self.session.get_ctx()
-        data = await self.request(
+        raw = await self.request(
             "POST",
             self.REPLY_URL,
             params={
@@ -216,12 +216,12 @@ class QzoneAPI(QzoneHttpClient):
                 "paramstr": f"@{target_name}",
             },
         )
-        return ApiResponse.from_raw(data)
+        return ApiResponse.from_raw(raw)
 
     async def delete(self, tid: str) -> ApiResponse:
         """删除指定 tid 的说说"""
         ctx = await self.session.get_ctx()
-        data = await self.request(
+        raw = await self.request(
             "POST",
             self.DELETE_URL,
             params={"g_tk": ctx.gtk2},
@@ -244,7 +244,7 @@ class QzoneAPI(QzoneHttpClient):
                 ),
             },
         )
-        return ApiResponse.from_raw(data)
+        return ApiResponse.from_raw(raw)
 
     async def get_feeds(
         self,
@@ -262,7 +262,7 @@ class QzoneAPI(QzoneHttpClient):
             num (int): 要获取的说说数量。
         """
         ctx = await self.session.get_ctx()
-        data = await self.request(
+        raw = await self.request(
             "GET",
             self.LIST_URL,
             params={
@@ -280,7 +280,7 @@ class QzoneAPI(QzoneHttpClient):
                 "need_private_comment": 1,
             },
         )
-        return ApiResponse.from_raw(data)
+        return ApiResponse.from_raw(raw)
 
     async def get_detail(self, post: Post) -> ApiResponse:
         """
@@ -294,7 +294,7 @@ class QzoneAPI(QzoneHttpClient):
             (True, Post) 或 (False, 错误信息)
         """
         ctx = await self.session.get_ctx()
-        data = await self.request(
+        raw = await self.request(
             "GET",
             self.DETAIL_URL,
             params={
@@ -305,14 +305,14 @@ class QzoneAPI(QzoneHttpClient):
             },
         )
 
-        return ApiResponse.from_raw(data)
+        return ApiResponse.from_raw(raw)
 
     async def get_recent_feeds(self, page: int = 1) -> ApiResponse:
         """
         获取自己的好友说说列表，返回已读与未读的说说列表
         """
         ctx = await self.session.get_ctx()
-        data = await self.request(
+        raw = await self.request(
             "GET",
             self.ZONE_LIST_URL,
             params={
@@ -333,5 +333,5 @@ class QzoneAPI(QzoneHttpClient):
                 "outputhtmlfeed": 1,  # 输出HTML格式
             },
         )
-        return ApiResponse.from_raw(data)
+        return ApiResponse.from_raw(raw)
 

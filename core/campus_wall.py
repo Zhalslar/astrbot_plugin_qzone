@@ -7,7 +7,7 @@ from .db import PostDB
 from .model import Post
 from .sender import Sender
 from .service import PostService
-from .utils import get_image_urls, parse_range
+from .utils import get_image_urls
 
 
 class CampusWall:
@@ -48,6 +48,28 @@ class CampusWall:
             message=f"收到新投稿#{post.id}",
         )
         event.stop_event()
+
+    async def delete(self, event: AiocqhttpMessageEvent):
+        """撤稿 <稿件ID> <理由>"""
+        args = event.message_str.split(" ")
+        post_id = args[1] if len(args) >= 2 else -1
+        reason = event.message_str.removeprefix(f"撤稿 {post_id}").strip()
+        post = await self.db.get(post_id)
+        if not post or not post.id:
+            yield event.plain_result(f"稿件#{post_id}不存在")
+            return
+        if post.uin != int(event.get_sender_id()):
+            yield event.plain_result("你只能撤回自己的稿件")
+            return
+        await self.db.delete(post.id)
+        msg = f"稿件#{post.id}已撤回"
+        if reason:
+            msg += f"\n理由：{reason}"
+        yield event.plain_result(msg)
+        # 通知管理员
+        await self.sender.send_admin_post(post, client=event.bot, message=msg)
+        event.stop_event()
+
 
     async def view(self, event: AstrMessageEvent):
         "查看稿件 <ID>, 默认最新稿件"
@@ -139,17 +161,3 @@ class CampusWall:
             await self.sender.send_user_post(
                 post, client=event.bot, message=user_msg
             )
-
-    async def delete(self, event: AstrMessageEvent):
-        """管理员命令：删除稿件 <稿件ID>"""
-        pos, num = parse_range(event)
-        posts = await self.db.list(offset=pos, limit=num)
-        if not posts:
-            yield event.plain_result("未查询到该稿件")
-            return
-        for post in posts:
-            if not post.id:
-                yield event.plain_result(f"稿件#{post.id}不存在")
-                continue
-            await self.db.delete(post.id)
-            yield event.plain_result(f"已删除稿件#{post.id}")

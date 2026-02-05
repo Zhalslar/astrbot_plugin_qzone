@@ -113,14 +113,14 @@ class ConfigNode:
 class LLMConfig(ConfigNode):
     comment_provider_id: str
     comment_prompt: str
-    diary_provider_id: str
-    diary_prompt: str
+    post_provider_id: str
+    post_prompt: str
 
 
 class SourceConfig(ConfigNode):
     ignore_groups: list[str]
     ignore_users: list[str]
-    diary_max_msg: int
+    post_max_msg: int
 
     def __init__(self, data: MutableMapping[str, Any]):
         super().__init__(data)
@@ -137,6 +137,7 @@ class TriggerConfig(ConfigNode):
     comment_cron: str
     read_prob: float
     send_admin: bool
+    like_when_comment: bool
 
 
 class PluginConfig(ConfigNode):
@@ -145,6 +146,7 @@ class PluginConfig(ConfigNode):
     source: SourceConfig
     trigger: TriggerConfig
     cookies_str: str
+    timeout: int
     pillowmd_style_dir: str
 
     _DB_VERSION = 4

@@ -10,8 +10,8 @@ import pydantic
 
 from astrbot.core.star.star_tools import StarTools
 
-from .comment import Comment
 from .config import PluginConfig
+from .model import Comment
 
 post_key = typing.Literal[
     "id",

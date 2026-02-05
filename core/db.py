@@ -129,6 +129,35 @@ class PostDB:
                 row = await cursor.fetchone()
                 return self._row_to_post(row) if row else None
 
+    async def list(
+        self,
+        offset: int = 0,
+        limit: int = 1,
+        *,
+        reverse: bool = False,
+    ) -> list[Post]:
+        """
+        批量获取稿件
+
+        offset: 起始偏移（0 表示最早的）
+        limit: 数量
+        reverse: 是否反转顺序（True = 最新优先）
+        """
+        if offset < 0 or limit <= 0:
+            return []
+
+        order = "DESC" if reverse else "ASC"
+
+        async with aiosqlite.connect(self.db_path) as db:
+            query = f"""
+                SELECT * FROM posts
+                ORDER BY id {order}
+                LIMIT ? OFFSET ?
+            """
+            async with db.execute(query, (limit, offset)) as cursor:
+                rows = await cursor.fetchall()
+                return [self._row_to_post(row) for row in rows]
+
     async def update(self, post: Post) -> None:
         async with aiosqlite.connect(self.db_path) as db:
             comment_dicts = [c.model_dump() for c in post.comments]

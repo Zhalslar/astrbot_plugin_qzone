@@ -168,7 +168,7 @@ class QzonePlugin(Star):
         posts = await self._get_posts(event)
         for post in posts:
             await self.sender.send_post(event, post, message="已删除说说")
-            await self.service.delete_posts(post)
+            await self.service.delete_post(post)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("发说说")

@@ -57,7 +57,6 @@ class PostService:
             posts: list[Post] = QzoneParser.parse_recent_feeds(resp.data)[pos : pos + num]
             if not posts:
                 raise RuntimeError("查询结果为空")
-            posts: list[Post] = posts[pos : pos + num]
 
 
         if no_self:
@@ -175,7 +174,7 @@ class PostService:
         await self.db.save(post)
         return post
 
-    async def delete_posts(self, post: Post):
+    async def delete_post(self, post: Post):
         """删除帖子"""
         if not post.tid:
             return

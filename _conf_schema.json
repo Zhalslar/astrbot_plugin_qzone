@@ -4,6 +4,12 @@
         "type": "string",
         "hint": "bot收到的投稿将在管理群里审批, 不填则将审批信息私发给bot管理员"
     },
+    "pillowmd_style_dir": {
+        "description": "Pillowmd样式目录路径",
+        "type": "string",
+        "hint": "例如 C:\\styles\\my-style 或 /data/styles/default, 留空则使用默认样式。pillowmd用于渲染说说内容",
+        "default": "data/plugins/astrbot_plugin_qzone/default_style"
+    },
     "llm": {
         "description": "LLM模块配置",
         "type": "object",
@@ -126,10 +132,10 @@
         },
         "default": 10
     },
-    "pillowmd_style_dir": {
-        "description": "Pillowmd样式目录路径",
-        "type": "string",
-        "hint": "例如 C:\\styles\\my-style 或 /data/styles/default, 留空则使用默认样式。pillowmd用于渲染说说内容",
-        "default": "data/plugins/astrbot_plugin_qzone/default_style"
+    "show_name": {
+        "description": "是否显示昵称",
+        "type": "bool",
+        "hint": "通过稿件发布说说时, 是否在头部显示“【来自 xxx 的投稿】”，若是匿名投稿者，昵称会显示为“匿名者”",
+        "default": true
     }
 }

@@ -3,6 +3,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 
+from .config import PluginConfig
 from .db import PostDB
 from .model import Post
 from .sender import Sender
@@ -13,10 +14,12 @@ from .utils import get_image_urls
 class CampusWall:
     def __init__(
         self,
+        config: PluginConfig,
         service: PostService,
         db: PostDB,
         sender: Sender,
     ):
+        self.cfg = config
         self.service = service
         self.db = db
         self.sender = sender
@@ -95,8 +98,8 @@ class CampusWall:
         if post.status == "approved":
             yield event.plain_result(f"稿件#{post.id}已通过，请勿重复通过")
             return
-
-        post.text = f"【来自 {post.show_name} 的投稿】\n\n{post.text}"
+        if self.cfg.show_name:
+            post.text = f"【来自 {post.show_name} 的投稿】\n\n{post.text}"
 
         # 发布说说
         try:

@@ -1,4 +1,5 @@
 import random
+import shutil
 
 from astrbot.api import logger
 from astrbot.api.event import filter
@@ -62,6 +63,12 @@ class QzonePlugin(Star):
             await self.auto_comment.terminate()
         if self.auto_publish:
             await self.auto_publish.terminate()
+        if self.cfg.cache_dir.exists():
+            try:
+                shutil.rmtree(self.cfg.cache_dir)
+            except Exception as e:
+                logger.error(f"清理缓存失败: {e}")
+
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     async def prob_read_feed(self, event: AiocqhttpMessageEvent):

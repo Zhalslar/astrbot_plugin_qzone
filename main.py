@@ -252,7 +252,7 @@ class QzonePlugin(Star):
             yield msg
 
     @filter.llm_tool()
-    async def llm_view_feeds(
+    async def llm_view_feed(
         self,
         event: AiocqhttpMessageEvent,
         user_id: str | None = None,

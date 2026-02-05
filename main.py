@@ -250,3 +250,49 @@ class QzonePlugin(Star):
         """拒绝稿件 <稿件ID> <原因>"""
         async for msg in self.campus_wall.reject(event):
             yield msg
+
+    @filter.llm_tool()
+    async def llm_view_feeds(
+        self,
+        event: AiocqhttpMessageEvent,
+        user_id: str | None = None,
+        pos: int = 0,
+    ):
+        """
+        查看某位用户QQ空间的某条说说、动态
+        Args:
+            user_id(string): 目标用户的QQ账号，必定为一串数字，如(12345678), 默认为当前用户QQ号
+            pos(number): 要查询的说说序号, 默认为0表示最新
+        """
+        try:
+            user_id = user_id or event.get_sender_id()
+            logger.debug(f"正在查询用户（{user_id}）的第 {pos} 条说说")
+            posts = await self.service.query_feeds(target_id=user_id, pos=pos, num=1)
+            if not posts:
+                return "查询结果为空"
+            post = posts[0]
+            await self.sender.send_post(event, post)
+            return post.text + "\n" + "\n".join(post.images)
+        except Exception as e:
+            return str(e)
+
+    @filter.llm_tool()
+    async def llm_publish_feed(
+        self,
+        event: AiocqhttpMessageEvent,
+        text: str = "",
+        get_image: bool = True,
+    ):
+        """
+        写一篇说说并发布到QQ空间
+        Args:
+            text(string): 要发布的说说内容
+            get_image(boolean): 是否获取当前对话中的图片附加到说说里, 默认为True
+        """
+        images = await get_image_urls(event) if get_image else []
+        try:
+            post = await self.service.publish_post(text=text, images=images)
+            await self.sender.send_post(event, post, message="已发布")
+            return "已发布说说到QQ空间: \n" + post.text + "\n" + "\n".join(post.images)
+        except Exception as e:
+            return str(e)

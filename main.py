@@ -254,6 +254,7 @@ class QzonePlugin(Star):
         except Exception as e:
             await event.send(event.plain_result(str(e)))
             logger.error(e)
+
     @filter.command("投稿")
     async def contribute_post(self, event: AiocqhttpMessageEvent):
         """投稿 <内容> <图片>"""
@@ -290,7 +291,6 @@ class QzonePlugin(Star):
         """拒绝稿件 <稿件ID> <原因>"""
         async for msg in self.campus_wall.reject(event):
             yield msg
-
 
     @filter.llm_tool()
     async def llm_view_feed(
@@ -342,8 +342,7 @@ class QzonePlugin(Star):
             # 发送展示
             await self.sender.send_post(event, post, message=msg)
 
-            # 返回简洁状态给 LLM
-            return msg or "已查看"
+            return msg + "\n" + post.text
 
         except Exception as e:
             logger.error(e)

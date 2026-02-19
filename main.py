@@ -150,7 +150,7 @@ class QzonePlugin(Star):
             return []
 
     @filter.command("看说说", alias={"查看说说"})
-    async def view_feed(self, event: AiocqhttpMessageEvent, arg: str | None = None):
+    async def view_feed(self, event: AiocqhttpMessageEvent):
         """
         看说说 <@群友> <序号>
         """
@@ -254,6 +254,7 @@ class QzonePlugin(Star):
         except Exception as e:
             await event.send(event.plain_result(str(e)))
             logger.error(e)
+
     @filter.command("投稿")
     async def contribute_post(self, event: AiocqhttpMessageEvent):
         """投稿 <内容> <图片>"""
@@ -291,30 +292,60 @@ class QzonePlugin(Star):
         async for msg in self.campus_wall.reject(event):
             yield msg
 
-
     @filter.llm_tool()
     async def llm_view_feed(
         self,
         event: AiocqhttpMessageEvent,
         user_id: str | None = None,
         pos: int = 0,
+        like: bool = False,
+        reply: bool = False,
     ):
         """
-        查看某位用户QQ空间的某条说说、动态
+        查看、点赞、评论某位用户QQ空间的某条说说、动态
         Args:
             user_id(string): 目标用户的QQ账号，必定为一串数字，如(12345678), 默认为当前用户QQ号
             pos(number): 要查询的说说序号, 默认为0表示最新
+            like(boolean): 是否点赞
+            reply(boolean): 是否评论
         """
         try:
             user_id = user_id or event.get_sender_id()
             logger.debug(f"正在查询用户（{user_id}）的第 {pos} 条说说")
-            posts = await self.service.query_feeds(target_id=user_id, pos=pos, num=1)
+
+            posts = await self.service.query_feeds(
+                target_id=user_id,
+                pos=pos,
+                num=1,
+                with_detail=True,
+            )
+
             if not posts:
                 return "查询结果为空"
+
             post = posts[0]
-            await self.sender.send_post(event, post)
-            return post.text + "\n" + "\n".join(post.images)
+
+            # 执行动作
+            msg = ""
+
+            if like and reply:
+                await self.service.comment_posts(post)
+                await self.service.like_posts(post)
+                msg = "已评论并点赞"
+            elif reply:
+                await self.service.comment_posts(post)
+                msg = "已评论"
+            elif like:
+                await self.service.like_posts(post)
+                msg = "已点赞"
+
+            # 发送展示
+            await self.sender.send_post(event, post, message=msg)
+
+            return msg + "\n" + post.text + "\n" + "\n".join(post.images)
+
         except Exception as e:
+            logger.error(e)
             return str(e)
 
     @filter.llm_tool()

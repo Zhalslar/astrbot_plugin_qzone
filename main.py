@@ -342,7 +342,7 @@ class QzonePlugin(Star):
             # 发送展示
             await self.sender.send_post(event, post, message=msg)
 
-            return msg + "\n" + post.text
+            return msg + "\n" + post.text + "\n" + "\n".join(post.images)
 
         except Exception as e:
             logger.error(e)

@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.0.3
+
+- Refactor: 重构自动发说说、自动评论的定时调度逻辑，改为以 `cron` 触发点作为基准时间，并通过 `publish_offset_minutes` / `comment_offset_minutes` 在基准时间前后随机浮动（`±N` 分钟）；偏移为 `0` 时严格按 `cron` 触发。
+
 ## v3.0.2
 
 - Fix: 修复 QZone API 返回空字符串时 `json5.loads()` 抛出 `ValueError: Empty strings are not legal JSON5` 导致插件异常中断的问题。

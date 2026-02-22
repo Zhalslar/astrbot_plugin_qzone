@@ -13,17 +13,6 @@ from .sender import Sender
 from .service import PostService
 
 
-DEFAULT_CRON_OFFSET_MINUTES = 30
-
-
-def _parse_offset_minutes(value: int | None) -> int:
-    try:
-        raw = DEFAULT_CRON_OFFSET_MINUTES if value is None else int(value)
-    except (TypeError, ValueError):
-        raw = DEFAULT_CRON_OFFSET_MINUTES
-    return max(0, raw)
-
-
 class AutoRandomCronTask:
     """
     Schedule one task per cron cycle around the cron anchor time.
@@ -35,7 +24,7 @@ class AutoRandomCronTask:
         job_name: str,
         cron_expr: str,
         timezone: zoneinfo.ZoneInfo,
-        offset_minutes: int,
+        offset_seconds: int,
     ):
         self.timezone = timezone
         self.scheduler = AsyncIOScheduler(timezone=self.timezone)
@@ -43,13 +32,14 @@ class AutoRandomCronTask:
 
         self.cron_expr = cron_expr
         self.job_name = job_name
-        self.offset_seconds = offset_minutes * 60
+        self.offset_seconds = offset_seconds
         self._last_base_time: datetime | None = None
+        self._terminated = False
 
         self._register_task()
 
         logger.info(
-            f"[{self.job_name}] 已启动，任务周期：{self.cron_expr}，偏移范围：±{offset_minutes} 分钟"
+            f"[{self.job_name}] 已启动，任务周期：{self.cron_expr}，偏移范围：±{self.offset_seconds} 分钟"
         )
 
     def _register_task(self):
@@ -62,6 +52,9 @@ class AutoRandomCronTask:
             logger.error(f"[{self.job_name}] Cron 格式错误：{e}")
 
     def _schedule_next_job(self):
+        if self._terminated:
+            logger.debug(f"[{self.job_name}] 调度器已终止，跳过后续调度")
+            return
         if not hasattr(self, "trigger"):
             return
 
@@ -90,12 +83,20 @@ class AutoRandomCronTask:
             f"[{self.job_name}] 基准时间：{base_time}，偏移：{delay_seconds} 秒，执行时间：{target_time}"
         )
 
-        self.scheduler.add_job(
-            func=self._run_task_wrapper,
-            trigger=DateTrigger(run_date=target_time, timezone=self.timezone),
-            name=f"{self.job_name}_once_{int(base_time.timestamp())}",
-            max_instances=1,
-        )
+        try:
+            self.scheduler.add_job(
+                func=self._run_task_wrapper,
+                trigger=DateTrigger(run_date=target_time, timezone=self.timezone),
+                name=f"{self.job_name}_once_{int(base_time.timestamp())}",
+                max_instances=1,
+            )
+        except Exception as e:
+            if self._terminated:
+                logger.debug(
+                    f"[{self.job_name}] 调度器终止后跳过 add_job：{type(e).__name__}: {e}"
+                )
+                return
+            logger.error(f"[{self.job_name}] 添加调度任务失败：{e}")
 
     async def _run_task_wrapper(self):
         logger.info(f"[{self.job_name}] 开始执行任务")
@@ -104,15 +105,22 @@ class AutoRandomCronTask:
         except Exception as e:
             logger.exception(f"[{self.job_name}] 任务执行失败: {e}")
         finally:
-            self._schedule_next_job()
+            if not self._terminated:
+                self._schedule_next_job()
             logger.info(f"[{self.job_name}] 本轮任务完成")
 
     async def do_task(self):
         raise NotImplementedError
 
     async def terminate(self):
+        if self._terminated:
+            return
+        self._terminated = True
         self.scheduler.remove_all_jobs()
-        self.scheduler.shutdown(wait=False)
+        try:
+            self.scheduler.shutdown(wait=False)
+        except Exception as e:
+            logger.debug(f"[{self.job_name}] 关闭调度器时忽略异常：{e}")
         logger.info(f"[{self.job_name}] 已停止")
 
 
@@ -125,8 +133,8 @@ class AutoComment(AutoRandomCronTask):
     ):
         cron = config.trigger.comment_cron
         timezone = config.timezone
-        offset_minutes = _parse_offset_minutes(config.trigger.comment_offset_minutes)
-        super().__init__("AutoComment", cron, timezone, offset_minutes)
+        offset = config.trigger.publish_offset
+        super().__init__("AutoComment", cron, timezone, offset)
         self.cfg = config
         self.service = service
         self.sender = sender
@@ -149,8 +157,8 @@ class AutoPublish(AutoRandomCronTask):
     ):
         cron = config.trigger.publish_cron
         timezone = config.timezone
-        offset_minutes = _parse_offset_minutes(config.trigger.publish_offset_minutes)
-        super().__init__("AutoPublish", cron, timezone, offset_minutes)
+        offset = config.trigger.publish_offset
+        super().__init__("AutoPublish", cron, timezone, offset)
         self.service = service
         self.sender = sender
 

@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Any
 
+from .constants import QZONE_CODE_OK, QZONE_CODE_UNKNOWN, QZONE_INTERNAL_META_KEY
+
 
 class QzoneContext:
     """统一封装 Qzone 请求所需的所有动态参数"""
@@ -56,10 +58,10 @@ class ApiResponse:
         code_key: str = "code",
         msg_key: str | tuple[str, ...] = ("message", "msg"),
         data_key: str | None = None,
-        success_code: int = 0,
+        success_code: int = QZONE_CODE_OK,
     ) -> "ApiResponse":
         # 解析 code
-        code = raw.get(code_key, -1)
+        code = raw.get(code_key, QZONE_CODE_UNKNOWN)
 
         # 解析 message
         message = None
@@ -72,7 +74,12 @@ class ApiResponse:
             message = raw.get(msg_key) or raw.get("data", {}).get(msg_key) or code
         # 成功
         if code == success_code:
-            data: dict[str, Any] = raw if data_key is None else raw.get(data_key, {})
+            data: dict[str, Any]
+            if data_key is None:
+                data = dict(raw)
+                data.pop(QZONE_INTERNAL_META_KEY, None)
+            else:
+                data = raw.get(data_key, {})
             return cls(
                 ok=True,
                 code=code,

@@ -10,6 +10,13 @@ import json5
 from astrbot.api import logger
 
 from ..model import Comment, Post
+from .constants import (
+    QZONE_CODE_UNKNOWN,
+    QZONE_MSG_EMPTY_RESPONSE,
+    QZONE_MSG_INVALID_RESPONSE,
+    QZONE_MSG_JSON_PARSE_ERROR,
+    QZONE_MSG_NON_OBJECT_RESPONSE,
+)
 
 
 def _safe_cell(text: str, max_len: int = 30) -> str:
@@ -33,6 +40,10 @@ class QzoneParser:
     """QQ 空间响应解析器"""
 
     @staticmethod
+    def _error_payload(message: str) -> dict[str, Any]:
+        return {"code": QZONE_CODE_UNKNOWN, "message": message, "data": {}}
+
+    @staticmethod
     def parse_response(text: str, *, debug: bool = False) -> dict[str, Any]:
         """
         解析 JSON / JSONP / 非标准 JSON
@@ -43,7 +54,7 @@ class QzoneParser:
 
         if not text or not text.strip():
             logger.warning("响应内容为空")
-            return {"code": -1, "message": "empty response", "data": {}}
+            return QzoneParser._error_payload(QZONE_MSG_EMPTY_RESPONSE)
 
         if m := re.search(
             r"callback\s*\(\s*([^{]*(\{.*\})[^)]*)\s*\)",
@@ -56,7 +67,7 @@ class QzoneParser:
             end = text.rfind("}")
             if start == -1 or end == -1 or end < start:
                 logger.warning("响应内容缺少 JSON 片段")
-                return {"code": -1, "message": "invalid response", "data": {}}
+                return QzoneParser._error_payload(QZONE_MSG_INVALID_RESPONSE)
             json_str = text[start : end + 1]
 
         json_str = json_str.replace("undefined", "null").strip()
@@ -65,10 +76,11 @@ class QzoneParser:
             data = json5.loads(json_str)
         except (ValueError, json.JSONDecodeError) as e:
             logger.error(f"JSON 解析错误: {e}")
-            return {"code": -1, "message": "json parse error", "data": {}}
+            return QzoneParser._error_payload(QZONE_MSG_JSON_PARSE_ERROR)
 
         if not isinstance(data, dict):
-            raise RuntimeError("JSON 解析结果不是 dict")
+            logger.error("JSON 解析结果不是 dict")
+            return QzoneParser._error_payload(QZONE_MSG_NON_OBJECT_RESPONSE)
 
         if debug:
             logger.debug(f"解析后数据: {data}")

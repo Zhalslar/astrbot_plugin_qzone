@@ -45,8 +45,10 @@ class QzoneHttpClient:
             text = await resp.text()
 
         parsed = QzoneParser.parse_response(text)
+        parsed["_http_status"] = resp.status
 
-        if resp.status in (401, 403) or parsed.get("code") == -3000:
+        # 仅在明确登录失效时触发重登
+        if resp.status == 401 or parsed.get("code") == -3000:
             if retry >= 2:
                 raise RuntimeError("登录失效，重试失败")
 
@@ -60,5 +62,9 @@ class QzoneHttpClient:
                 headers=headers,
                 retry=retry + 1,
             )
+
+        if resp.status == 403 and parsed.get("code") in (-1, None):
+            parsed["code"] = 403
+            parsed["message"] = "权限不足"
 
         return parsed

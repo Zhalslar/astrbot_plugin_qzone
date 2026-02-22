@@ -42,21 +42,21 @@ class PostService:
         if target_id:
             resp = await self.qzone.get_feeds(target_id, pos=pos, num=num)
             if not resp.ok:
-                raise RuntimeError(resp.message)
+                raise RuntimeError(self._map_feed_error(resp, target_id=target_id))
             msglist = resp.data.get("msglist") or []
             if not msglist:
-                raise RuntimeError("查询结果为空")
+                raise RuntimeError(f"QQ {target_id} 暂无可见说说")
             posts: list[Post] = QzoneParser.parse_feeds(msglist)
 
         else:
             resp = await self.qzone.get_recent_feeds()
             if not resp.ok:
-                raise RuntimeError(resp.message)
+                raise RuntimeError(self._map_feed_error(resp))
             posts: list[Post] = QzoneParser.parse_recent_feeds(resp.data)[
                 pos : pos + num
             ]
             if not posts:
-                raise RuntimeError("查询结果为空")
+                raise RuntimeError("动态流暂无可见说说")
 
         if no_self:
             uin = await self.session.get_uin()
@@ -74,6 +74,48 @@ class PostService:
             await self.db.save(post)
 
         return posts
+
+    @staticmethod
+    def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
+        return any(k in text for k in keywords)
+
+    def _map_feed_error(self, resp, *, target_id: str | None = None) -> str:
+        message = str(resp.message or "").strip()
+        lower_message = message.lower()
+        code = resp.code
+
+        permission_keywords = (
+            "无权限",
+            "权限",
+            "私密",
+            "不可见",
+            "拒绝访问",
+            "受限",
+            "forbidden",
+            "permission denied",
+            "access denied",
+        )
+        login_keywords = ("登录", "失效", "skey", "g_tk", "cookie", "expired")
+
+        if code == -3000 or self._contains_any(lower_message, login_keywords):
+            return "登录状态失效，请重新登录后重试"
+
+        if code in (403, -403) or self._contains_any(lower_message, permission_keywords):
+            if target_id:
+                return f"无权限查看 QQ {target_id} 的说说"
+            return "无权限访问动态流"
+
+        if code == -1 and message == "empty response":
+            if target_id:
+                return f"无权限查看 QQ {target_id} 的说说（接口返回空响应）"
+            return "动态接口返回空响应，请稍后重试"
+
+        if code == -1 and message in ("invalid response", "json parse error"):
+            return "接口响应格式异常，请稍后重试"
+
+        if message:
+            return f"查询说说失败：{message}"
+        return f"查询说说失败：code={code}"
 
     async def _fill_post_detail(self, posts: list[Post]) -> list[Post]:
         result: list[Post] = []

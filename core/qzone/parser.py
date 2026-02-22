@@ -41,6 +41,10 @@ class QzoneParser:
         if debug:
             logger.debug(f"响应数据: {text}")
 
+        if not text or not text.strip():
+            logger.warning("响应内容为空")
+            return {"code": -1, "message": "empty response", "data": {}}
+
         if m := re.search(
             r"callback\s*\(\s*([^{]*(\{.*\})[^)]*)\s*\)",
             text,
@@ -48,15 +52,20 @@ class QzoneParser:
         ):
             json_str = m.group(2)
         else:
-            json_str = text[text.find("{") : text.rfind("}") + 1]
+            start = text.find("{")
+            end = text.rfind("}")
+            if start == -1 or end == -1 or end < start:
+                logger.warning("响应内容缺少 JSON 片段")
+                return {"code": -1, "message": "invalid response", "data": {}}
+            json_str = text[start : end + 1]
 
         json_str = json_str.replace("undefined", "null").strip()
 
         try:
             data = json5.loads(json_str)
-        except json.JSONDecodeError as e:
+        except (ValueError, json.JSONDecodeError) as e:
             logger.error(f"JSON 解析错误: {e}")
-            raise
+            return {"code": -1, "message": "json parse error", "data": {}}
 
         if not isinstance(data, dict):
             raise RuntimeError("JSON 解析结果不是 dict")

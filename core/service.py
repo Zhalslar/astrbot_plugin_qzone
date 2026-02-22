@@ -1,4 +1,5 @@
 import time
+from typing import Any
 
 from astrbot.api import logger
 
@@ -6,6 +7,20 @@ from .db import PostDB
 from .llm_action import LLMAction
 from .model import Comment, Post
 from .qzone import QzoneAPI, QzoneParser, QzoneSession
+from .qzone.constants import (
+    HTTP_STATUS_FORBIDDEN,
+    QZONE_CODE_LOGIN_EXPIRED,
+    QZONE_CODE_PERMISSION_DENIED,
+    QZONE_CODE_PERMISSION_DENIED_LEGACY,
+    QZONE_CODE_UNKNOWN,
+    QZONE_INTERNAL_HTTP_STATUS_KEY,
+    QZONE_INTERNAL_META_KEY,
+    QZONE_MSG_EMPTY_RESPONSE,
+    QZONE_MSG_INVALID_RESPONSE,
+    QZONE_MSG_JSON_PARSE_ERROR,
+    QZONE_MSG_NON_OBJECT_RESPONSE,
+    QZONE_MSG_PERMISSION_DENIED,
+)
 
 
 class PostService:
@@ -42,21 +57,21 @@ class PostService:
         if target_id:
             resp = await self.qzone.get_feeds(target_id, pos=pos, num=num)
             if not resp.ok:
-                raise RuntimeError(resp.message)
+                raise RuntimeError(self._map_feed_error(resp, target_id=target_id))
             msglist = resp.data.get("msglist") or []
             if not msglist:
-                raise RuntimeError("查询结果为空")
+                raise RuntimeError(f"QQ {target_id} 暂无可见说说")
             posts: list[Post] = QzoneParser.parse_feeds(msglist)
 
         else:
             resp = await self.qzone.get_recent_feeds()
             if not resp.ok:
-                raise RuntimeError(resp.message)
+                raise RuntimeError(self._map_feed_error(resp))
             posts: list[Post] = QzoneParser.parse_recent_feeds(resp.data)[
                 pos : pos + num
             ]
             if not posts:
-                raise RuntimeError("查询结果为空")
+                raise RuntimeError("动态流暂无可见说说")
 
         if no_self:
             uin = await self.session.get_uin()
@@ -74,6 +89,67 @@ class PostService:
             await self.db.save(post)
 
         return posts
+
+    @staticmethod
+    def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
+        return any(k in text for k in keywords)
+
+    def _map_feed_error(self, resp, *, target_id: str | None = None) -> str:
+        message = str(resp.message or "").strip()
+        lower_message = message.lower()
+        code = resp.code
+        http_status = self._extract_http_status(resp.raw)
+
+        permission_keywords = (
+            "无权限",
+            "权限",
+            "私密",
+            "不可见",
+            "拒绝访问",
+            "受限",
+            "forbidden",
+            QZONE_MSG_PERMISSION_DENIED,
+            "access denied",
+        )
+        login_keywords = ("登录", "失效", "skey", "g_tk", "cookie", "expired")
+
+        if code == QZONE_CODE_LOGIN_EXPIRED or self._contains_any(
+            lower_message, login_keywords
+        ):
+            return "登录状态失效，请重新登录后重试"
+
+        if (
+            code in (QZONE_CODE_PERMISSION_DENIED, QZONE_CODE_PERMISSION_DENIED_LEGACY)
+            or http_status == HTTP_STATUS_FORBIDDEN
+            or self._contains_any(lower_message, permission_keywords)
+        ):
+            if target_id:
+                return f"无权限查看 QQ {target_id} 的说说"
+            return "无权限访问动态流"
+
+        if code == QZONE_CODE_UNKNOWN and message == QZONE_MSG_EMPTY_RESPONSE:
+            if target_id:
+                return f"无权限查看 QQ {target_id} 的说说（接口返回空响应）"
+            return "动态接口返回空响应，请稍后重试"
+
+        if code == QZONE_CODE_UNKNOWN and message in (
+            QZONE_MSG_INVALID_RESPONSE,
+            QZONE_MSG_JSON_PARSE_ERROR,
+            QZONE_MSG_NON_OBJECT_RESPONSE,
+        ):
+            return "接口响应格式异常，请稍后重试"
+
+        if message:
+            return f"查询说说失败：{message}"
+        return f"查询说说失败：code={code}"
+
+    @staticmethod
+    def _extract_http_status(raw: dict[str, Any]) -> int | None:
+        meta = raw.get(QZONE_INTERNAL_META_KEY)
+        if not isinstance(meta, dict):
+            return None
+        status = meta.get(QZONE_INTERNAL_HTTP_STATUS_KEY)
+        return status if isinstance(status, int) else None
 
     async def _fill_post_detail(self, posts: list[Post]) -> list[Post]:
         result: list[Post] = []

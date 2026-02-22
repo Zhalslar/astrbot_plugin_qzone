@@ -12,81 +12,108 @@ from .config import PluginConfig
 from .sender import Sender
 from .service import PostService
 
-# ============================
-# 基类：随机偏移的周期任务
-# ============================
+
+DEFAULT_CRON_OFFSET_MINUTES = 30
+
+
+def _parse_offset_minutes(value: int | None) -> int:
+    try:
+        raw = DEFAULT_CRON_OFFSET_MINUTES if value is None else int(value)
+    except (TypeError, ValueError):
+        raw = DEFAULT_CRON_OFFSET_MINUTES
+    return max(0, raw)
 
 
 class AutoRandomCronTask:
     """
-    基类：在 cron 规定的周期内随机某个时间点执行任务。
-    子类只需实现 async do_task()。
+    Schedule one task per cron cycle around the cron anchor time.
+    Subclasses only need to implement async do_task().
     """
 
-    def __init__(self, job_name: str, cron_expr: str, timezone: zoneinfo.ZoneInfo):
+    def __init__(
+        self,
+        job_name: str,
+        cron_expr: str,
+        timezone: zoneinfo.ZoneInfo,
+        offset_minutes: int,
+    ):
         self.timezone = timezone
         self.scheduler = AsyncIOScheduler(timezone=self.timezone)
         self.scheduler.start()
 
         self.cron_expr = cron_expr
         self.job_name = job_name
+        self.offset_seconds = offset_minutes * 60
+        self._last_base_time: datetime | None = None
 
-        self.register_task()
+        self._register_task()
 
-        logger.info(f"[{self.job_name}] 已启动，任务周期：{self.cron_expr}")
+        logger.info(
+            f"[{self.job_name}] 已启动，任务周期：{self.cron_expr}，偏移范围：±{offset_minutes} 分钟"
+        )
 
-    # 注册 cron → 触发 schedule_random_job
-    def register_task(self):
+    def _register_task(self):
         try:
-            self.trigger = CronTrigger.from_crontab(self.cron_expr)
-            self.scheduler.add_job(
-                func=self.schedule_random_job,
-                trigger=self.trigger,
-                name=f"{self.job_name}_scheduler",
-                max_instances=1,
+            self.trigger = CronTrigger.from_crontab(
+                self.cron_expr, timezone=self.timezone
             )
+            self._schedule_next_job()
         except Exception as e:
             logger.error(f"[{self.job_name}] Cron 格式错误：{e}")
 
-    # 计算当前周期随机时间点，并安排 DateTrigger 执行
-    def schedule_random_job(self):
-        now = datetime.now(self.timezone)
-        next_run = self.trigger.get_next_fire_time(None, now)
-        if not next_run:
-            logger.error(f"[{self.job_name}] 无法计算下一次周期时间")
+    def _schedule_next_job(self):
+        if not hasattr(self, "trigger"):
             return
 
-        cycle_seconds = int((next_run - now).total_seconds())
-        delay = random.randint(0, cycle_seconds)
-        target_time = now + timedelta(seconds=delay)
+        now = datetime.now(self.timezone)
+        base_time = self.trigger.get_next_fire_time(self._last_base_time, now)
+        if not base_time:
+            logger.error(f"[{self.job_name}] 无法计算下一次基准时间")
+            return
 
-        logger.info(f"[{self.job_name}] 下周期随机执行时间：{target_time}")
+        self._last_base_time = base_time
+
+        delay_seconds = (
+            random.randint(-self.offset_seconds, self.offset_seconds)
+            if self.offset_seconds
+            else 0
+        )
+        target_time = base_time + timedelta(seconds=delay_seconds)
+
+        if target_time <= now:
+            target_time = now + timedelta(seconds=1)
+            logger.warning(
+                f"[{self.job_name}] 偏移后时间已过，改为立即补偿执行：{target_time}"
+            )
+
+        logger.info(
+            f"[{self.job_name}] 基准时间：{base_time}，偏移：{delay_seconds} 秒，执行时间：{target_time}"
+        )
 
         self.scheduler.add_job(
             func=self._run_task_wrapper,
             trigger=DateTrigger(run_date=target_time, timezone=self.timezone),
-            name=f"{self.job_name}_once_{target_time.timestamp()}",
+            name=f"{self.job_name}_once_{int(base_time.timestamp())}",
             max_instances=1,
         )
 
-    # 统一包装（方便打印日志）
     async def _run_task_wrapper(self):
         logger.info(f"[{self.job_name}] 开始执行任务")
-        await self.do_task()
-        logger.info(f"[{self.job_name}] 本轮任务完成")
+        try:
+            await self.do_task()
+        except Exception as e:
+            logger.exception(f"[{self.job_name}] 任务执行失败: {e}")
+        finally:
+            self._schedule_next_job()
+            logger.info(f"[{self.job_name}] 本轮任务完成")
 
-    # 子类实现
     async def do_task(self):
         raise NotImplementedError
 
     async def terminate(self):
         self.scheduler.remove_all_jobs()
+        self.scheduler.shutdown(wait=False)
         logger.info(f"[{self.job_name}] 已停止")
-
-
-# ============================
-# 自动评论
-# ============================
 
 
 class AutoComment(AutoRandomCronTask):
@@ -98,7 +125,8 @@ class AutoComment(AutoRandomCronTask):
     ):
         cron = config.trigger.comment_cron
         timezone = config.timezone
-        super().__init__("AutoComment", cron, timezone)
+        offset_minutes = _parse_offset_minutes(config.trigger.comment_offset_minutes)
+        super().__init__("AutoComment", cron, timezone, offset_minutes)
         self.cfg = config
         self.service = service
         self.sender = sender
@@ -112,11 +140,6 @@ class AutoComment(AutoRandomCronTask):
             await self.sender.send_admin_post(post, message="定时读说说")
 
 
-# ============================
-# 自动发说说
-# ============================
-
-
 class AutoPublish(AutoRandomCronTask):
     def __init__(
         self,
@@ -126,7 +149,8 @@ class AutoPublish(AutoRandomCronTask):
     ):
         cron = config.trigger.publish_cron
         timezone = config.timezone
-        super().__init__("AutoPublish", cron, timezone)
+        offset_minutes = _parse_offset_minutes(config.trigger.publish_offset_minutes)
+        super().__init__("AutoPublish", cron, timezone, offset_minutes)
         self.service = service
         self.sender = sender
 

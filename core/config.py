@@ -135,7 +135,9 @@ class SourceConfig(ConfigNode):
 
 class TriggerConfig(ConfigNode):
     publish_cron: str
+    publish_offset_minutes: int | None
     comment_cron: str
+    comment_offset_minutes: int | None
     read_prob: float
     send_admin: bool
     like_when_comment: bool

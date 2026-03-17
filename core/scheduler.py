@@ -133,19 +133,29 @@ class AutoComment(AutoRandomCronTask):
     ):
         cron = config.trigger.comment_cron
         timezone = config.timezone
-        offset = config.trigger.publish_offset
+        offset = config.trigger.comment_offset
         super().__init__("AutoComment", cron, timezone, offset)
         self.cfg = config
         self.service = service
         self.sender = sender
 
     async def do_task(self):
-        posts = await self.service.query_feeds(pos=0, num=20)
+        posts = await self.service.query_feeds(
+            pos=0,
+            num=20,
+            no_self=True,
+            no_commented=True,
+        )
         for post in posts:
-            await self.service.comment_posts(post)
-            if self.cfg.trigger.like_when_comment:
-                await self.service.like_posts(post)
-            await self.sender.send_admin_post(post, message="定时读说说")
+            try:
+                await self.service.comment_posts(post)
+                if self.cfg.trigger.like_when_comment:
+                    await self.service.like_posts(post)
+                await self.sender.send_admin_post(post, message="定时读说说")
+            except Exception as e:
+                logger.exception(
+                    f"[{self.job_name}] 跳过说说评论失败: tid={post.tid}, uin={post.uin}, name={post.name}, error={e}"
+                )
 
 
 class AutoPublish(AutoRandomCronTask):

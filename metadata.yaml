@@ -5,3 +5,5 @@ help: 略
 version: v3.0.4
 author: Zhalslar
 repo: https://github.com/Zhalslar/astrbot_plugin_qzone
+support_platforms:
+  - aiocqhttp

@@ -151,6 +151,16 @@ class PostService:
         status = meta.get(QZONE_INTERNAL_HTTP_STATUS_KEY)
         return status if isinstance(status, int) else None
 
+    @staticmethod
+    def _has_comment_from_uin(post: Post, uin: int) -> bool:
+        return any(comment.uin == uin for comment in post.comments)
+
+    async def _has_saved_self_comment(self, post: Post, uin: int) -> bool:
+        if not post.tid:
+            return False
+        saved_post = await self.db.get(post.tid, key="tid")
+        return bool(saved_post and self._has_comment_from_uin(saved_post, uin))
+
     async def _fill_post_detail(self, posts: list[Post]) -> list[Post]:
         result: list[Post] = []
 
@@ -174,6 +184,11 @@ class PostService:
         uin = await self.session.get_uin()
 
         for post in posts:
+            if self._has_comment_from_uin(post, uin):
+                continue
+            if await self._has_saved_self_comment(post, uin):
+                continue
+
             # 如果已经有 comments，说明是 detail post
             if not post.comments:
                 resp = await self.qzone.get_detail(post)
@@ -184,7 +199,7 @@ class PostService:
                     continue
                 post = parsed[0]
 
-            if any(c.uin == uin for c in post.comments):
+            if self._has_comment_from_uin(post, uin):
                 continue
 
             result.append(post)

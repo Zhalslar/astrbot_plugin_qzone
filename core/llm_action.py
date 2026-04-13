@@ -151,6 +151,41 @@ class LLMAction:
         except Exception as e:
             raise ValueError(f"LLM 调用失败：{e}")
 
+
+
+    async def should_comment(self, post: Post) -> bool:
+        """
+        用LLM判断是否应该评论这条说说
+        返回True表示值得评论，False表示跳过
+        """
+        provider = (
+            self.context.get_provider_by_id(self.cfg.llm.comment_judge_provider_id)
+            or self.context.get_using_provider()
+        )
+        if not isinstance(provider, Provider):
+            logger.warning("未配置用于评论判断的 LLM 提供商，默认评论")
+            return True
+
+        try:
+            content = post.text
+            if post.rt_con:
+                content += f"\n[转发]\n{post.rt_con}"
+
+            prompt = f"\n[帖子内容]：\n{content}"
+
+            llm_response = await provider.text_chat(
+                system_prompt=self.cfg.llm.comment_judge_prompt,
+                prompt=prompt,
+                image_urls=post.images,
+            )
+            result = llm_response.completion_text.strip().upper()
+            should = "YES" in result or "Y" in result.split()[0] if result else False
+            logger.info(f"LLM 评论判断：{'评论' if should else '跳过'} → {post.name}: {post.text[:30]}")
+            return should
+
+        except Exception as e:
+            logger.warning(f"LLM 评论判断失败，默认跳过: {e}")
+            return False
     async def generate_reply(self,post: Post, comment: Comment) -> str | None:
         """根据评论内容生成回复"""
         provider = (

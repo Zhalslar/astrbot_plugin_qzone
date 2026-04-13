@@ -221,7 +221,9 @@ class PostService:
         """点赞帖子"""
         if not post.tid:
             raise ValueError("帖子 tid 为空")
-        await self.qzone.like(post)
+        resp = await self.qzone.like(post)
+        if not resp.ok:
+            raise RuntimeError(f"点赞失败: {resp.message}")
         logger.info(f"已点赞 → {post.name}")
 
 
@@ -294,6 +296,37 @@ class PostService:
             )
         )
         await self.db.save(post)
+
+
+
+    async def reply_comment_obj(self, post: Post, comment: Comment):
+        """
+        直接根据 Comment 对象回复（供自动回评使用）
+        """
+        if not post.tid:
+            raise ValueError("帖子 tid 为空")
+
+        content = await self.llm.generate_reply(post, comment)
+        if not content:
+            raise ValueError("生成回复内容为空")
+
+        resp = await self.qzone.reply(post, comment, content)
+        if not resp.ok:
+            raise RuntimeError(resp.message)
+
+        uin = await self.session.get_uin()
+        name = await self.session.get_nickname()
+        post.comments.append(
+            Comment(
+                uin=uin,
+                nickname=name,
+                content=content,
+                create_time=int(time.time()),
+                parent_tid=comment.tid,
+            )
+        )
+        await self.db.save(post)
+        logger.info(f"自动回复 → {comment.nickname}: {content}")
 
     async def publish_post(
         self,

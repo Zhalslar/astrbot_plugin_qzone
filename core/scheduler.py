@@ -11,6 +11,7 @@ from astrbot.api import logger
 from .config import PluginConfig
 from .sender import Sender
 from .service import PostService
+from .qzone import QzoneParser
 
 
 class AutoRandomCronTask:
@@ -148,6 +149,10 @@ class AutoComment(AutoRandomCronTask):
         )
         for post in posts:
             try:
+                # 先让LLM判断是否值得评论
+                if not await self.service.llm.should_comment(post):
+                    logger.info(f"[{self.job_name}] 跳过说说（不值得评论）: tid={post.tid}, name={post.name}")
+                    continue
                 await self.service.comment_posts(post)
                 if self.cfg.trigger.like_when_comment:
                     await self.service.like_posts(post)
@@ -180,3 +185,195 @@ class AutoPublish(AutoRandomCronTask):
             return
         post = await self.service.publish_post(text=text)
         await self.sender.send_admin_post(post, message="定时发说说")
+
+
+class AutoReply(AutoRandomCronTask):
+    def __init__(
+        self,
+        config: PluginConfig,
+        service: PostService,
+        sender: Sender,
+    ):
+        cron = config.trigger.reply_cron
+        timezone = config.timezone
+        offset = config.trigger.reply_offset
+        super().__init__("AutoReply", cron, timezone, offset)
+        self.cfg = config
+        self.service = service
+        self.sender = sender
+
+    async def do_task(self):
+        """
+        定时检查自己说说的评论，自动回复未回复的评论
+        """
+        # 获取自己的 uin
+        uin = await self.service.session.get_uin()
+
+        # 查询自己最近的说说
+        posts = await self.service.query_feeds(
+            target_id=str(uin),
+            pos=0,
+            num=10,
+            with_detail=True,
+        )
+
+        replied_count = 0
+        for post in posts:
+            try:
+                count = await self._reply_new_comments(post, uin)
+                replied_count += count
+            except Exception as e:
+                logger.exception(
+                    f"[{self.job_name}] 自动回评失败: tid={post.tid}, error={e}"
+                )
+
+        if replied_count > 0:
+            logger.info(f"[{self.job_name}] 本轮共回复了 {replied_count} 条评论")
+
+    async def _reply_new_comments(self, post, self_uin: int) -> int:
+        """
+        对一条说说中所有未回复的非己评论进行回复
+        返回本条说说中实际回复的评论数
+        """
+        # 从数据库中加载已保存的说说（含历史评论记录）
+        saved_post = await self.service.db.get(post.tid, key="tid")
+
+        # 收集已经回复过的评论 tid 集合
+        replied_tids: set[int] = set()
+        if saved_post:
+            for c in saved_post.comments:
+                if c.uin == self_uin and c.parent_tid:
+                    replied_tids.add(c.parent_tid)
+                elif c.uin == self_uin and c.tid:
+                    # 主评论被回复过的情况
+                    replied_tids.add(c.tid)
+
+        # 找出所有非自己的评论中未被回复的
+        new_comments = [
+            c for c in post.comments
+            if c.uin != self_uin and c.tid not in replied_tids
+        ]
+
+        count = 0
+        for comment in new_comments:
+            try:
+                await self.service.reply_comment_obj(post, comment)
+                # 更新 replied_tids 避免重复回复
+                replied_tids.add(comment.tid)
+                count += 1
+
+                # 通知管理员
+                await self.sender.send_admin_post(
+                    post,
+                    message=f"自动回复了 {comment.nickname} 的评论",
+                )
+
+                # 回复间隔，避免太快被风控
+                import asyncio
+                await asyncio.sleep(3)
+
+            except Exception as e:
+                logger.warning(
+                    f"[{self.job_name}] 回复评论失败: "
+                    f"comment_tid={comment.tid}, {comment.nickname}: {e}"
+                )
+
+        return count
+
+
+class AutoLike(AutoRandomCronTask):
+    def __init__(
+        self,
+        config: PluginConfig,
+        service: PostService,
+        sender: Sender,
+    ):
+        cron = config.trigger.like_cron
+        timezone = config.timezone
+        offset = config.trigger.like_offset
+        super().__init__("AutoLike", cron, timezone, offset)
+        self.cfg = config
+        self.service = service
+        self.sender = sender
+
+    def _get_liked_file(self):
+        return self.cfg.data_dir / "liked_tids.json"
+
+    def _load_liked(self) -> set[str]:
+        f = self._get_liked_file()
+        if f.exists():
+            import json
+            try:
+                data = json.loads(f.read_text())
+                return set(data)
+            except Exception:
+                return set()
+        return set()
+
+    def _save_liked(self, tids: set[str]):
+        import json
+        f = self._get_liked_file()
+        f.write_text(json.dumps(list(tids), ensure_ascii=False))
+
+    async def do_task(self):
+        """
+        定时浏览好友动态，自动点赞新的说说
+        """
+        liked_tids = self._load_liked()
+        self_uin = await self.service.session.get_uin()
+
+        # 获取好友动态
+        try:
+            resp = await self.service.qzone.get_recent_feeds()
+            if not resp.ok:
+                logger.warning(f"[{self.job_name}] 获取动态失败: {resp.message}")
+                return
+
+            posts = QzoneParser.parse_recent_feeds(resp.data)
+        except Exception as e:
+            logger.exception(f"[{self.job_name}] 获取动态异常: {e}")
+            return
+
+        liked_count = 0
+        for post in posts:
+            # 跳过自己的说说（不给自己点赞）
+            if post.uin == self_uin:
+                continue
+
+            # 跳过已经点赞过的
+            tid_key = f"{post.uin}_{post.tid}"
+            if tid_key in liked_tids:
+                continue
+
+            try:
+                await self.service.like_posts(post)
+                liked_tids.add(tid_key)
+                liked_count += 1
+                logger.info(f"[{self.job_name}] 已点赞 {post.name} 的说说")
+
+                # 间隔，避免太快被风控
+                import asyncio
+                await asyncio.sleep(3)
+            except Exception as e:
+                logger.warning(
+                    f"[{self.job_name}] 点赞失败: "
+                    f"tid={post.tid}, name={post.name}, error={e}"
+                )
+
+        if liked_count > 0:
+            self._save_liked(liked_tids)
+            logger.info(f"[{self.job_name}] 本轮共点赞了 {liked_count} 条说说")
+            # 通知管理员
+            if self.cfg.client:
+                try:
+                    msg_chain = [{"type": "text", "data": {"text": f"自动点赞了 {liked_count} 条好友说说"}}]
+                    for admin_id in self.cfg.admins_id:
+                        if admin_id.isdigit():
+                            await self.cfg.client.send_private_msg(
+                                user_id=int(admin_id), message=msg_chain
+                            )
+                except Exception as e:
+                    logger.error(f"[{self.job_name}] 通知管理员失败: {e}")
+
+
+# 需要导入 QzoneParser（在文件顶部已有 service 的导入，这里补充 parser）

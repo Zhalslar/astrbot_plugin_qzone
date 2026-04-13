@@ -7,10 +7,11 @@ from .constants import QZONE_CODE_OK, QZONE_CODE_UNKNOWN, QZONE_INTERNAL_META_KE
 class QzoneContext:
     """统一封装 Qzone 请求所需的所有动态参数"""
 
-    def __init__(self, uin: int, skey: str, p_skey: str):
+    def __init__(self, uin: int, skey: str, p_skey: str, raw_cookies: dict[str, str] | None = None):
         self.uin = uin
         self.skey = skey
         self.p_skey = p_skey
+        self._raw_cookies = raw_cookies or {}
 
     @property
     def gtk2(self) -> str:
@@ -25,6 +26,13 @@ class QzoneContext:
             "uin": f"o{self.uin}",
             "skey": self.skey,
             "p_skey": self.p_skey,
+            "pt2gguin": self._raw_cookies.get("pt2gguin", f"o{self.uin}"),
+            "p_uin": self._raw_cookies.get("p_uin", f"o{self.uin}"),
+            "ptcz": self._raw_cookies.get("ptcz", ""),
+            "RK": self._raw_cookies.get("RK", ""),
+            "pt4_token": self._raw_cookies.get("pt4_token", ""),
+            "pt_recent_uins": self._raw_cookies.get("pt_recent_uins", ""),
+            "qzone_check": self._raw_cookies.get("qzone_check", ""),
         }
 
     def headers(self) -> dict[str, str]:
@@ -35,7 +43,6 @@ class QzoneContext:
             "Host": "user.qzone.qq.com",
             "Connection": "keep-alive",
         }
-
 
 
 @dataclass(slots=True)

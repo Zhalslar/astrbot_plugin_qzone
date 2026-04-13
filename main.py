@@ -15,7 +15,7 @@ from .core.db import PostDB
 from .core.llm_action import LLMAction
 from .core.model import Post
 from .core.qzone import QzoneAPI, QzoneSession
-from .core.scheduler import AutoComment, AutoPublish
+from .core.scheduler import AutoComment, AutoPublish, AutoReply, AutoLike
 from .core.sender import Sender
 from .core.service import PostService
 from .core.utils import get_ats, get_image_urls, parse_range
@@ -44,6 +44,10 @@ class QzonePlugin(Star):
         self.auto_comment: AutoComment | None = None
         # 自动发说说模块
         self.auto_publish: AutoPublish | None = None
+        # 自动回复评论模块
+        self.auto_reply: AutoReply | None = None
+        # 自动点赞模块
+        self.auto_like: AutoLike | None = None
 
     async def initialize(self):
         """插件加载时触发"""
@@ -55,6 +59,12 @@ class QzonePlugin(Star):
         if not self.auto_publish and self.cfg.trigger.publish_cron:
             self.auto_publish = AutoPublish(self.cfg, self.service, self.sender)
 
+        if not self.auto_reply and self.cfg.trigger.reply_cron:
+            self.auto_reply = AutoReply(self.cfg, self.service, self.sender)
+
+        if not self.auto_like and self.cfg.trigger.like_cron:
+            self.auto_like = AutoLike(self.cfg, self.service, self.sender)
+
     async def terminate(self):
         """插件卸载时"""
         if self.qzone:
@@ -63,6 +73,10 @@ class QzonePlugin(Star):
             await self.auto_comment.terminate()
         if self.auto_publish:
             await self.auto_publish.terminate()
+        if self.auto_reply:
+            await self.auto_reply.terminate()
+        if self.auto_like:
+            await self.auto_like.terminate()
         if self.cfg.cache_dir.exists():
             try:
                 shutil.rmtree(self.cfg.cache_dir)
@@ -342,7 +356,15 @@ class QzonePlugin(Star):
             # 发送展示
             await self.sender.send_post(event, post, message=msg)
 
-            return msg + "\n" + post.text + "\n" + "\n".join(post.images)
+            # 构建返回给LLM的完整信息（包含评论）
+            result = msg + "\n" + post.text
+            if post.images:
+                result += "\n" + "\n".join(post.images)
+            if post.comments:
+                result += "\n\n【评论】\n"
+                for comment in post.comments:
+                    result += f"  - {comment.nickname}({comment.uin}): {comment.plain_content}\n"
+            return result
 
         except Exception as e:
             logger.error(e)

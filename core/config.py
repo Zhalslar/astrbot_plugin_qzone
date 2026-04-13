@@ -115,6 +115,8 @@ class LLMConfig(ConfigNode):
     post_prompt: str
     comment_provider_id: str
     comment_prompt: str
+    comment_judge_provider_id: str
+    comment_judge_prompt: str
     reply_provider_id: str
     reply_prompt: str
 
@@ -134,6 +136,10 @@ class SourceConfig(ConfigNode):
 
 
 class TriggerConfig(ConfigNode):
+    reply_cron: str
+    reply_offset: int
+    like_cron: str
+    like_offset: int
     publish_cron: str
     publish_offset: int
     comment_cron: str

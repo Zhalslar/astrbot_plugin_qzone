@@ -116,22 +116,43 @@ class QzoneAPI(QzoneHttpClient):
         )
         return ApiResponse.from_raw(raw)
 
+    async def _get_qzonetoken(self) -> str:
+        """
+        获取 qzonetoken（从空间页面 HTML 中提取 window.g_qzonetoken）
+        """
+        ctx = await self.session.get_ctx()
+        raw = await self.request(
+            "GET",
+            f"{self.BASE_URL}/{ctx.uin}",
+        )
+        import re
+        # 匹配 window.g_qzonetoken = "xxx" 或 g_qzonetoken = "xxx"
+        match = re.search(r'g_qzonetoken\s*=\s*"([^"]+)"', str(raw))
+        if match:
+            return match.group(1)
+        logger.warning("未能获取 qzonetoken")
+        return ""
+
     async def like(self, post: Post) -> ApiResponse:
         """
         点赞指定说说
         """
         ctx = await self.session.get_ctx()
+        qzonetoken = await self._get_qzonetoken()
+
+        params = {"g_tk": ctx.gtk2}
+        if qzonetoken:
+            params["qzonetoken"] = qzonetoken
+
         raw = await self.request(
             "POST",
             self.DOLIKE_URL,
-            params={
-                "g_tk": ctx.gtk2,
-            },
+            params=params,
             data={
                 "qzreferrer": f"{self.BASE_URL}/{ctx.uin}",  # 来源
                 "opuin": ctx.uin,  # 操作者QQ
-                "unikey": f"{self.BASE_URL}/{post.uin}/mood/{post.tid}",  # 动态唯一标识
-                "curkey": f"{self.BASE_URL}/{post.uin}/mood/{post.tid}",  # 要操作的动态对象
+                "unikey": f"http://user.qzone.qq.com/{post.uin}/mood/{post.tid}",  # 动态唯一标识（必须用http）
+                "curkey": f"http://user.qzone.qq.com/{post.uin}/mood/{post.tid}",  # 要操作的动态对象（必须用http）
                 "appid": 311,  # 应用ID(说说:311)
                 "from": 1,  # 来源
                 "typeid": 0,  # 类型ID

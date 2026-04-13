@@ -127,7 +127,8 @@ class QzoneAPI(QzoneHttpClient):
         )
         import re
         # 匹配 window.g_qzonetoken = "xxx" 或 g_qzonetoken = "xxx"
-        match = re.search(r'g_qzonetoken\s*=\s*"([^"]+)"', str(raw))
+        text = raw.text if hasattr(raw, "text") else str(raw)
+        match = re.search(r'g_qzonetoken\s*=\s*"([^"]+)"', text)
         if match:
             return match.group(1)
         logger.warning("未能获取 qzonetoken")

@@ -179,7 +179,8 @@ class LLMAction:
                 image_urls=post.images,
             )
             result = llm_response.completion_text.strip().upper()
-            should = "YES" in result or "Y" in result.split()[0] if result else False
+            first_token = result.split()[0].upper() if result else ""
+            should = first_token in ("YES", "Y")
             logger.info(f"LLM 评论判断：{'评论' if should else '跳过'} → {post.name}: {post.text[:30]}")
             return should
 

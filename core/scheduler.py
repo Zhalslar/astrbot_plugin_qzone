@@ -299,27 +299,31 @@ class AutoLike(AutoRandomCronTask):
     def _get_liked_file(self):
         return self.cfg.data_dir / "liked_tids.json"
 
-    def _load_liked(self) -> set[str]:
+    async def _load_liked(self) -> set[str]:
+        import json
+        import aiofiles
         f = self._get_liked_file()
         if f.exists():
-            import json
             try:
-                data = json.loads(f.read_text())
+                async with aiofiles.open(f, "r", encoding="utf-8") as af:
+                    data = json.loads(await af.read())
                 return set(data)
             except Exception:
                 return set()
         return set()
 
-    def _save_liked(self, tids: set[str]):
+    async def _save_liked(self, tids: set[str]):
         import json
+        import aiofiles
         f = self._get_liked_file()
-        f.write_text(json.dumps(list(tids), ensure_ascii=False))
+        async with aiofiles.open(f, "w", encoding="utf-8") as af:
+            await af.write(json.dumps(list(tids), ensure_ascii=False))
 
     async def do_task(self):
         """
         定时浏览好友动态，自动点赞新的说说
         """
-        liked_tids = self._load_liked()
+        liked_tids = await self._load_liked()
         self_uin = await self.service.session.get_uin()
 
         # 获取好友动态
@@ -361,7 +365,7 @@ class AutoLike(AutoRandomCronTask):
                 )
 
         if liked_count > 0:
-            self._save_liked(liked_tids)
+            await self._save_liked(liked_tids)
             logger.info(f"[{self.job_name}] 本轮共点赞了 {liked_count} 条说说")
             # 通知管理员
             if self.cfg.client:

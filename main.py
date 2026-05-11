@@ -249,7 +249,7 @@ class QzonePlugin(Star):
             yield event.plain_result(f"稿件#{post_id}不存在")
             return
         try:
-            await self.service.reply_comment(post, index=comment_index)
+            await self.service.reply_comment(post, index=comment_index, content=reply_text)
             await self.sender.send_post(event, post, message="已回复评论")
         except Exception as e:
             await event.send(event.plain_result(str(e)))
@@ -300,6 +300,7 @@ class QzonePlugin(Star):
         pos: int = 0,
         like: bool = False,
         reply: bool = False,
+        comment_text: str | None = None,
     ):
         """
         查看、点赞、评论某位用户QQ空间的某条说说、动态
@@ -308,6 +309,7 @@ class QzonePlugin(Star):
             pos(number): 要查询的说说序号, 默认为0表示最新
             like(boolean): 是否点赞
             reply(boolean): 是否评论
+            comment_text(string): 自定义评论内容（若提供则直接使用此内容评论，否则自动生成）
         """
         try:
             user_id = user_id or event.get_sender_id()
@@ -329,11 +331,11 @@ class QzonePlugin(Star):
             msg = ""
 
             if like and reply:
-                await self.service.comment_posts(post)
+                await self.service.comment_posts(post, content=comment_text)
                 await self.service.like_posts(post)
                 msg = "已评论并点赞"
             elif reply:
-                await self.service.comment_posts(post)
+                await self.service.comment_posts(post, content=comment_text)
                 msg = "已评论"
             elif like:
                 await self.service.like_posts(post)
@@ -368,3 +370,12 @@ class QzonePlugin(Star):
             return "已发布说说到QQ空间: \n" + post.text + "\n" + "\n".join(post.images)
         except Exception as e:
             return str(e)
+
+    @filter.llm_tool()
+    async def llm_reply_comment(
+        self, event, user_id=None, pos=0, comment_index=-1,
+        reply_text: str | None = None,
+    ):
+        """回复某条说说的某条评论"""
+        # 调用 service.reply_comment 并传入 reply_text
+        await self.service.reply_comment(post, index=comment_index, content=reply_text)

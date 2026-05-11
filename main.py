@@ -249,7 +249,7 @@ class QzonePlugin(Star):
             yield event.plain_result(f"稿件#{post_id}不存在")
             return
         try:
-            await self.service.reply_comment(post, index=comment_index, content=reply_text)
+            await self.service.reply_comment(post, index=comment_index)
             await self.sender.send_post(event, post, message="已回复评论")
         except Exception as e:
             await event.send(event.plain_result(str(e)))

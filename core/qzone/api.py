@@ -17,7 +17,7 @@ class QzoneAPI(QzoneHttpClient):
     """QQ 空间 HTTP API 封装"""
 
     BASE_URL = "https://user.qzone.qq.com"
-    BASE_URL_HTTP = "http://user.qzone.com"
+    BASE_URL_HTTP = "http://user.qzone.qq.com"
     UPLOAD_IMAGE_URL = "https://up.qzone.qq.com/cgi-bin/upload/cgi_upload_image"
     EMOTION_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6"
     DOLIKE_URL = "https://user.qzone.qq.com/proxy/domain/w.qzone.qq.com/cgi-bin/likes/internal_dolike_app"

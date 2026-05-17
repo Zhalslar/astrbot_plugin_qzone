@@ -91,7 +91,7 @@ git clone https://github.com/Zhalslar/astrbot_plugin_qzone
 
 - [x] 发说说
 - [x] 校园表白墙功能：投稿、审核投稿
-- [x] 点赞说说（接口显示成功，但实测点赞无效）
+- [x] 点赞说说
 - [x] 评论说说
 - [x] 定时自动发说说、日记
 - [x] 定时自动评论、点赞好友的说说

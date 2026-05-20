@@ -17,7 +17,7 @@ class QzoneAPI(QzoneHttpClient):
     """QQ 空间 HTTP API 封装"""
 
     BASE_URL = "https://user.qzone.qq.com"
-    BASE_URL_HTTP = "http://user.qzone.qq.com"
+    BASE_URL_HTTP = "http://user.qzone.qq.com" # 注意：某些接口要求必须使用http协议
     UPLOAD_IMAGE_URL = "https://up.qzone.qq.com/cgi-bin/upload/cgi_upload_image"
     EMOTION_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6"
     DOLIKE_URL = "https://user.qzone.qq.com/proxy/domain/w.qzone.qq.com/cgi-bin/likes/internal_dolike_app"
@@ -131,8 +131,8 @@ class QzoneAPI(QzoneHttpClient):
             data={
                 "qzreferrer": f"{self.BASE_URL}/{ctx.uin}",  # 来源
                 "opuin": ctx.uin,  # 操作者QQ
-                "unikey": f"{self.BASE_URL_HTTP}/{post.uin}/mood/{post.tid}",  # 动态唯一标识
-                "curkey": f"{self.BASE_URL_HTTP}/{post.uin}/mood/{post.tid}",  # 要操作的动态对象
+                "unikey": f"{self.BASE_URL_HTTP}/{post.uin}/mood/{post.tid}",  # 动态唯一标识（必须使用http）
+                "curkey": f"{self.BASE_URL_HTTP}/{post.uin}/mood/{post.tid}",  # 要操作的动态对象（必须使用http）
                 "appid": 311,  # 应用ID(说说:311)
                 "from": 1,  # 来源
                 "typeid": 0,  # 类型ID

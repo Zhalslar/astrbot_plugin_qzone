@@ -37,7 +37,6 @@ class QzoneContext:
         }
 
 
-
 @dataclass(slots=True)
 class ApiResponse:
     """

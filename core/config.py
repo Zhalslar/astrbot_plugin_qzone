@@ -118,6 +118,7 @@ class LLMConfig(ConfigNode):
     reply_provider_id: str
     reply_prompt: str
 
+
 class SourceConfig(ConfigNode):
     ignore_groups: list[str]
     ignore_users: list[str]
@@ -145,6 +146,7 @@ class TriggerConfig(ConfigNode):
 
 class PluginConfig(ConfigNode):
     manage_group: str
+    use_builtin_renderer: bool
     pillowmd_style_dir: str
     llm: LLMConfig
     source: SourceConfig
@@ -153,7 +155,7 @@ class PluginConfig(ConfigNode):
     timeout: int
     show_name: bool
 
-    _DB_VERSION = 4
+    _DB_VERSION = 5
 
     def __init__(self, cfg: AstrBotConfig, context: Context):
         super().__init__(cfg)
@@ -168,6 +170,11 @@ class PluginConfig(ConfigNode):
         self.default_style_dir = (
             Path(get_astrbot_plugin_path()) / "astrbot_plugin_qzone" / "default_style"
         )
+        self.emoji_cdn = (
+            "https://cdn.jsdelivr.net/npm/emoji-datasource-facebook@14.0.0/"
+            "img/facebook/64/"
+        )
+        self.emoji_style = "FACEBOOK"
         self.style_dir = (
             Path(self.pillowmd_style_dir).resolve()
             if self.pillowmd_style_dir

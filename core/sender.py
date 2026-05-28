@@ -10,31 +10,32 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from .config import PluginConfig
 from .model import Post
+from .renderer import create_message_renderer
 
 
 class Sender:
     def __init__(self, config: PluginConfig):
         self.cfg = config
-        self.style = None
-        self._load_renderer()
-
-    def _load_renderer(self):
-        # 实例化pillowmd样式
-        try:
-            import pillowmd
-
-            self.style = pillowmd.LoadMarkdownStyles(self.cfg.style_dir)
-        except Exception as e:
-            logger.error(f"无法加载pillowmd样式：{e}")
+        self.renderer = create_message_renderer(config)
 
     async def _post_to_seg(self, post: Post) -> BaseMessageComponent:
-        post_text = post.to_str()
-        if self.style:
-            img = await self.style.AioRender(text=post_text, useImageUrl=True)
-            img_path = img.Save(self.cfg.cache_dir)
-            return Image.fromFileSystem(str(img_path))
-        else:
-            return Plain(post_text)
+        image_path = await self.renderer.render_post(post)
+        if image_path:
+            return Image.fromFileSystem(str(image_path))
+        return Plain(post.to_str())
+
+    async def _text_to_seg(self, text: str) -> BaseMessageComponent:
+        image_path = await self.renderer.render_text(text)
+        if image_path:
+            return Image.fromFileSystem(str(image_path))
+        return Plain(text)
+
+    async def _send_chain(
+        self,
+        event: AstrMessageEvent,
+        *segments: BaseMessageComponent,
+    ) -> None:
+        await event.send(event.chain_result(list(segments)))
 
     async def _send_to_admins(self, client: CQHttp, obmsg: list[dict]):
         for admin_id in self.cfg.admins_id:
@@ -131,19 +132,12 @@ class Sender:
             event.message_obj.group_id = None  # type: ignore
             event.message_obj.sender.user_id = self.cfg.admin_id
 
-        post_text = post.to_str()
-
         chain = []
 
         if message:
             chain.append(Plain(message))
 
-        if self.style:
-            img = await self.style.AioRender(text=post_text, useImageUrl=True)
-            img_path = img.Save(self.cfg.cache_dir)
-            chain.append(Image(str(img_path)))
-        else:
-            chain.append(Plain(post_text))
+        chain.append(await self._post_to_seg(post))
 
         await event.send(event.chain_result(chain))
 
@@ -152,13 +146,5 @@ class Sender:
         event: AstrMessageEvent,
         message: str = "",
     ):
-        chain = []
-
-        if self.style:
-            img = await self.style.AioRender(text=message, useImageUrl=True)
-            img_path = img.Save(self.cfg.cache_dir)
-            chain.append(Image(str(img_path)))
-        else:
-            chain.append(Plain(message))
-
-        await event.send(event.chain_result(chain))
+        seg = await self._text_to_seg(message)
+        await self._send_chain(event, seg)

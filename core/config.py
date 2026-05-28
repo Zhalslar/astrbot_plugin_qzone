@@ -154,7 +154,7 @@ class PluginConfig(ConfigNode):
     llm: LLMConfig
     source: SourceConfig
     trigger: TriggerConfig
-    cookies_str: str
+    cookie_ttl: int
     timeout: int
     show_name: bool
 
@@ -222,8 +222,4 @@ class PluginConfig(ConfigNode):
         for uid in uids:
             if self.source.is_ignore_user(uid):
                 self.source.ignore_users.remove(str(uid))
-        self.save_config()
-
-    def update_cookies(self, cookies_str: str):
-        self.cookies_str = cookies_str
         self.save_config()

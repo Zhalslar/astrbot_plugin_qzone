@@ -156,11 +156,16 @@
             }
         }
     },
-    "cookies_str": {
-        "description": "QQ Cookies",
-        "type": "text",
-        "hint": "选填, 用于维持QQ空间登录态, 留空则自动从 aiocqhttp 客户端获取",
-        "default": ""
+    "cookie_ttl": {
+        "description": "Cookie刷新TTL",
+        "type": "int",
+        "hint": "距离上次刷新超过该时长后，下次请求前会先调用 OneBot 的 get_login_info 刷新 Cookie，单位秒。设为 0 表示不按 TTL 主动刷新",
+        "slider": {
+            "min": 0,
+            "max": 86400,
+            "step": 60
+        },
+        "default": 600
     },
     "timeout": {
         "description": "请求超时时间",

@@ -71,7 +71,7 @@ class ResourceFetcher:
 
     def __init__(self, config: PluginConfig):
         self.cfg = config
-        self.resource_dir = self.cfg.cache_dir / "builtin_renderer"
+        self.resource_dir = self.cfg.temp_dir / "builtin_renderer"
         self.resource_dir.mkdir(parents=True, exist_ok=True)
         self._headers = {
             "User-Agent": (

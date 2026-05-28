@@ -330,7 +330,7 @@ class Renderer:
         self.EMOJI_SOURCE = EmojiCDNSource(
             base_url=self.cfg.emoji_cdn,
             style=self.cfg.emoji_style,
-            cache_dir=self.cfg.cache_dir / self._EMOJIS,
+            cache_dir=self.cfg.temp_dir / self._EMOJIS,
         )
         """Emoji Source"""
 
@@ -365,11 +365,19 @@ class Renderer:
     def _load_platform_logos(cls) -> None:
         cls.platform_logos = {}
         for p in cls.LOGOS_DIR.rglob("*.png"):
-            try:
-                with Image.open(p) as img:
-                    cls.platform_logos[p.stem] = img.convert("RGBA")
-            except Exception:
-                continue
+            cls._load_logo_image(p, p.stem, cls.platform_logos)
+
+    @staticmethod
+    def _load_logo_image(
+        logo_path: Path,
+        logo_name: str,
+        logo_store: dict[str, PILImage],
+    ) -> None:
+        try:
+            with Image.open(logo_path) as img:
+                logo_store[logo_name] = img.convert("RGBA")
+        except Exception:
+            return
 
     async def text(
         self,
@@ -454,7 +462,7 @@ class Renderer:
 
     async def render_card(self, result: ParseResult) -> Path | None:
         """渲染卡片并落盘，失败返回 None"""
-        cache = self.cfg.cache_dir / f"card_{uuid.uuid4().hex}.png"
+        cache = self.cfg.temp_dir / f"card_{uuid.uuid4().hex}.png"
         try:
             img = await self._create_card_image(result)
             buf = BytesIO()
@@ -1104,8 +1112,9 @@ class Renderer:
         # 在右侧绘制平台 logo（仅在非转发内容时绘制）
         if ctx.not_repost:
             platform_name = ctx.result.platform.name
-            if platform_name in self.platform_logos:
-                logo_img = self.platform_logos[platform_name]
+            platform_logos = getattr(self.__class__, "platform_logos", {})
+            if platform_name in platform_logos:
+                logo_img = platform_logos[platform_name]
                 # 计算 logo 位置（右侧对齐）
                 logo_x = ctx.image.width - self.PADDING - logo_img.width
                 # 垂直居中对齐头像

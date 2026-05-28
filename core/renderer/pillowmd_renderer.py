@@ -27,11 +27,11 @@ class PillowmdMessageRenderer:
             return None
 
         img = await self.style.AioRender(text=post.to_str(), useImageUrl=True)
-        return img.Save(self.cfg.cache_dir)
+        return img.Save(self.cfg.temp_dir)
 
     async def render_text(self, text: str) -> Path | None:
         if not self.style:
             return None
 
         img = await self.style.AioRender(text=text, useImageUrl=True)
-        return img.Save(self.cfg.cache_dir)
+        return img.Save(self.cfg.temp_dir)

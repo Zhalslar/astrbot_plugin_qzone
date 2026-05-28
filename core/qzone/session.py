@@ -1,7 +1,6 @@
-# qzone_api.py
-
 import asyncio
 from http.cookies import SimpleCookie
+from time import monotonic
 
 from astrbot.api import logger
 
@@ -17,12 +16,13 @@ class QzoneSession:
     def __init__(self, config: PluginConfig):
         self.cfg = config
         self._ctx: QzoneContext | None = None
+        self._last_refresh_at: float = 0.0
         self._lock = asyncio.Lock()
 
     async def get_ctx(self) -> QzoneContext:
         async with self._lock:
-            if not self._ctx:
-                self._ctx = await self.login(self.cfg.cookies_str)
+            if not self._ctx or self._is_cookie_expired():
+                self._ctx = await self._refresh_ctx_locked()
             return self._ctx
 
     async def get_uin(self) -> int:
@@ -43,31 +43,42 @@ class QzoneSession:
     async def invalidate(self) -> None:
         async with self._lock:
             self._ctx = None
+            self._last_refresh_at = 0.0
 
-    async def login(self, cookies_str: str | None = None) -> QzoneContext:
+    async def login(self) -> QzoneContext:
         logger.info("正在登录 QQ 空间")
+        async with self._lock:
+            self._ctx = await self._refresh_ctx_locked()
+            logger.info(f"登录成功，uin={self._ctx.uin}")
+            return self._ctx
 
+    async def _refresh_ctx_locked(self) -> QzoneContext:
+        if not self.cfg.client:
+            raise RuntimeError("CQHttp 实例不存在")
+
+        info = await self.cfg.client.get_login_info()
+        cookies_str = str(info.get("cookies", "")).strip()
         if not cookies_str:
-            if not self.cfg.client:
-                raise RuntimeError("CQHttp 实例不存在")
-            cookies_str = (await self.cfg.client.get_cookies(domain=self.DOMAIN)).get(
-                "cookies"
-            )
-            if not cookies_str:
-                raise RuntimeError("获取 Cookie 失败")
-
-            self.cfg.update_cookies(cookies_str)
+            raise RuntimeError("get_login_info 未返回可用 Cookie")
 
         c = {k: v.value for k, v in SimpleCookie(cookies_str).items()}
-        uin = int(c.get("uin", "0")[1:])
+        uin_text = c.get("uin", "0")
+        uin_raw = uin_text[1:] if uin_text[:1].lower() == "o" else uin_text
+        uin = int(uin_raw) if uin_raw.isdigit() else 0
         if not uin:
             raise RuntimeError("Cookie 中缺少合法 uin")
 
-        self._ctx = QzoneContext(
+        self._last_refresh_at = monotonic()
+        return QzoneContext(
             uin=uin,
             skey=c.get("skey", ""),
-            p_skey=c.get("p_skey", ""),
+            p_skey=c.get("p_skey", "") or c.get("skey", ""),
         )
 
-        logger.info(f"登录成功，uin={uin}")
-        return self._ctx
+    def _is_cookie_expired(self) -> bool:
+        ttl = max(int(self.cfg.cookie_ttl), 0)
+        if ttl <= 0:
+            return False
+        if self._last_refresh_at <= 0:
+            return True
+        return monotonic() - self._last_refresh_at >= ttl

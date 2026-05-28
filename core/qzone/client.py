@@ -1,4 +1,3 @@
-
 from typing import Any
 
 import aiohttp
@@ -9,6 +8,7 @@ from ..config import PluginConfig
 from .constants import (
     HTTP_STATUS_FORBIDDEN,
     HTTP_STATUS_UNAUTHORIZED,
+    QZONE_CODE_IMAGE_EXPIRED,
     QZONE_CODE_LOGIN_EXPIRED,
     QZONE_CODE_UNKNOWN,
     QZONE_INTERNAL_HTTP_STATUS_KEY,
@@ -61,9 +61,11 @@ class QzoneHttpClient:
         meta[QZONE_INTERNAL_HTTP_STATUS_KEY] = resp.status
 
         # 仅在明确登录失效时触发重登
-        if resp.status == HTTP_STATUS_UNAUTHORIZED or parsed.get(
-            "code"
-        ) == QZONE_CODE_LOGIN_EXPIRED:
+        if (
+            resp.status == HTTP_STATUS_UNAUTHORIZED
+            or parsed.get("code") == QZONE_CODE_LOGIN_EXPIRED
+            or parsed.get("data", {}).get("ret") == QZONE_CODE_IMAGE_EXPIRED
+        ):
             if retry >= 2:
                 raise RuntimeError("登录失效，重试失败")
 

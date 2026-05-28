@@ -13,6 +13,7 @@ PostKey = Literal[
     "tid",
     "uin",
     "name",
+    "avatar_url",
     "gin",
     "status",
     "anon",
@@ -26,8 +27,8 @@ PostKey = Literal[
 ]
 POST_KEYS = set(get_args(PostKey))
 
-class PostDB:
 
+class PostDB:
     def __init__(self, config: PluginConfig):
         self.db_path = config.db_path
 
@@ -38,16 +39,17 @@ class PostDB:
             tid=row[1],
             uin=row[2],
             name=row[3],
-            gin=row[4],
-            text=row[5],
-            images=json.loads(row[6]),
-            videos=json.loads(row[7]),
-            anon=bool(row[8]),
-            status=row[9],
-            create_time=row[10],
-            rt_con=row[11],
-            comments=[Comment.model_validate(c) for c in json.loads(row[12])],
-            extra_text=row[13],
+            avatar_url=row[4],
+            gin=row[5],
+            text=row[6],
+            images=json.loads(row[7]),
+            videos=json.loads(row[8]),
+            anon=bool(row[9]),
+            status=row[10],
+            create_time=row[11],
+            rt_con=row[12],
+            comments=[Comment.model_validate(c) for c in json.loads(row[13])],
+            extra_text=row[14],
         )
 
     @staticmethod
@@ -63,6 +65,7 @@ class PostDB:
                     tid TEXT UNIQUE,
                     uin INTEGER NOT NULL,
                     name TEXT NOT NULL,
+                    avatar_url TEXT,
                     gin INTEGER NOT NULL,
                     text TEXT NOT NULL,
                     images TEXT NOT NULL CHECK(json_valid(images)),
@@ -75,7 +78,16 @@ class PostDB:
                     extra_text TEXT
                 )
             """)
+            await self._ensure_avatar_url_column(db)
             await db.commit()
+
+    @staticmethod
+    async def _ensure_avatar_url_column(db: aiosqlite.Connection) -> None:
+        async with db.execute("PRAGMA table_info(posts)") as cursor:
+            columns = await cursor.fetchall()
+        if any(column[1] == "avatar_url" for column in columns):
+            return
+        await db.execute("ALTER TABLE posts ADD COLUMN avatar_url TEXT")
 
     async def add(self, post: Post) -> int:
         """添加稿件"""
@@ -83,13 +95,14 @@ class PostDB:
             comment_dicts = [c.model_dump() for c in post.comments]
             cur = await db.execute(
                 """
-                INSERT INTO posts (tid, uin, name, gin, text, images, videos, anon, status, create_time, rt_con, comments, extra_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO posts (tid, uin, name, avatar_url, gin, text, images, videos, anon, status, create_time, rt_con, comments, extra_text)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     post.tid or None,
                     post.uin,
                     post.name,
+                    post.avatar_url,
                     post.gin,
                     post.text,
                     self._encode_urls(post.images),
@@ -164,7 +177,7 @@ class PostDB:
             await db.execute(
                 """
                 UPDATE posts SET
-                    tid = ?, uin = ?, name = ?, gin = ?, text = ?,
+                    tid = ?, uin = ?, name = ?, avatar_url = ?, gin = ?, text = ?,
                     images = ?, videos = ?, anon = ?, status = ?,
                     create_time = ?, rt_con = ?, comments = ?, extra_text = ?
                 WHERE id = ?
@@ -173,6 +186,7 @@ class PostDB:
                     post.tid or None,
                     post.uin,
                     post.name,
+                    post.avatar_url,
                     post.gin,
                     post.text,
                     self._encode_urls(post.images),

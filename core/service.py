@@ -224,7 +224,6 @@ class PostService:
         await self.qzone.like(post)
         logger.info(f"已点赞 → {post.name}")
 
-
     async def comment_posts(self, post: Post):
         """评论帖子"""
         if not post.tid:

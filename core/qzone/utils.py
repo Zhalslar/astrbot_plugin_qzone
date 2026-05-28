@@ -7,6 +7,7 @@ from astrbot.api import logger
 
 BytesOrStr = Union[str, bytes]  # noqa: UP007
 
+
 async def download_file(url: str) -> bytes | None:
     """下载图片"""
     url = url.replace("https://", "http://")

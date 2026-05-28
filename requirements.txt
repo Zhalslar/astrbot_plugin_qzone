@@ -1,2 +1,3 @@
 pillowmd
 json5
+apilmoji[tqdm]>=0.3.0,<1.0.0

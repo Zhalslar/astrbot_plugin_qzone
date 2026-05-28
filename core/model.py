@@ -113,6 +113,8 @@ class Post(pydantic.BaseModel):
     """用户ID"""
     name: str = ""
     """用户昵称"""
+    avatar_url: str | None = None
+    """用户头像地址"""
     gin: int = 0
     """群聊ID"""
     text: str = ""

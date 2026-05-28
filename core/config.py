@@ -12,8 +12,11 @@ from aiocqhttp import CQHttp
 from astrbot.api import logger
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.star.context import Context
-from astrbot.core.star.star_tools import StarTools
-from astrbot.core.utils.astrbot_path import get_astrbot_plugin_path
+from astrbot.core.utils.astrbot_path import (
+    get_astrbot_plugin_data_path,
+    get_astrbot_plugin_path,
+    get_astrbot_temp_path,
+)
 
 
 class ConfigNode:
@@ -118,6 +121,7 @@ class LLMConfig(ConfigNode):
     reply_provider_id: str
     reply_prompt: str
 
+
 class SourceConfig(ConfigNode):
     ignore_groups: list[str]
     ignore_users: list[str]
@@ -145,6 +149,7 @@ class TriggerConfig(ConfigNode):
 
 class PluginConfig(ConfigNode):
     manage_group: str
+    use_builtin_renderer: bool
     pillowmd_style_dir: str
     llm: LLMConfig
     source: SourceConfig
@@ -153,27 +158,31 @@ class PluginConfig(ConfigNode):
     timeout: int
     show_name: bool
 
-    _DB_VERSION = 4
+    _DB_VERSION = 5
+    _plugin_name = "astrbot_plugin_qzone"
 
     def __init__(self, cfg: AstrBotConfig, context: Context):
         super().__init__(cfg)
         self.context = context
-        self.data_dir = StarTools.get_data_dir("astrbot_plugin_qzone")
-
-        self.cache_dir = self.data_dir / "cache"
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.data_dir = Path(get_astrbot_plugin_data_path()) / self._plugin_name
+        self.plugin_dir = Path(get_astrbot_plugin_path()) / self._plugin_name
+        self.temp_dir = Path(get_astrbot_temp_path()) / self._plugin_name
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
 
         self.db_path = self.data_dir / f"posts_{self._DB_VERSION}.db"
 
-        self.default_style_dir = (
-            Path(get_astrbot_plugin_path()) / "astrbot_plugin_qzone" / "default_style"
-        )
+        self.default_style_dir = self.plugin_dir / "default_style"
         self.style_dir = (
             Path(self.pillowmd_style_dir).resolve()
             if self.pillowmd_style_dir
             else self.default_style_dir
         )
-
+        self.emoji_cdn = (
+            "https://cdn.jsdelivr.net/npm/emoji-datasource-facebook@14.0.0/"
+            "img/facebook/64/"
+        )
+        self.emoji_style = "FACEBOOK"
         tz = context.get_config().get("timezone")
         self.timezone = (
             zoneinfo.ZoneInfo(tz) if tz else zoneinfo.ZoneInfo("Asia/Shanghai")

@@ -73,7 +73,6 @@ class CampusWall:
         await self.sender.send_admin_post(post, client=event.bot, message=msg)
         event.stop_event()
 
-
     async def view(self, event: AstrMessageEvent):
         "查看稿件 <ID>, 默认最新稿件"
         args = event.message_str.split(" ")[1:] or ["-1"]
@@ -163,6 +162,4 @@ class CampusWall:
             user_msg = f"您的投稿#{post.id}未通过"
             if reason:
                 user_msg += f"\n理由：{reason}"
-            await self.sender.send_user_post(
-                post, client=event.bot, message=user_msg
-            )
+            await self.sender.send_user_post(post, client=event.bot, message=user_msg)

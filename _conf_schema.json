@@ -4,6 +4,12 @@
         "type": "string",
         "hint": "bot收到的投稿将在管理群里审批, 不填则将审批信息私发给bot管理员"
     },
+    "use_builtin_renderer": {
+        "description": "启用内置卡片渲染器",
+        "type": "bool",
+        "hint": "开启后优先使用插件内置卡片渲染器；关闭后继续使用 pillowmd 渲染",
+        "default": true
+    },
     "pillowmd_style_dir": {
         "description": "Pillowmd样式目录路径",
         "type": "string",

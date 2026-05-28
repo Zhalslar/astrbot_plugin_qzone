@@ -151,7 +151,7 @@ class LLMAction:
         except Exception as e:
             raise ValueError(f"LLM 调用失败：{e}")
 
-    async def generate_reply(self,post: Post, comment: Comment) -> str | None:
+    async def generate_reply(self, post: Post, comment: Comment) -> str | None:
         """根据评论内容生成回复"""
         provider = (
             self.context.get_provider_by_id(self.cfg.llm.reply_provider_id)

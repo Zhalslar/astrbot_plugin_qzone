@@ -71,4 +71,3 @@ class QzoneSession:
 
         logger.info(f"登录成功，uin={uin}")
         return self._ctx
-

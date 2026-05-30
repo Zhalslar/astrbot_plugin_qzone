@@ -82,7 +82,7 @@ class QzonePlugin(Star):
             )
             for post in posts:
                 try:
-                    await self.service.comment_posts(post)
+                    await self.service.comment_posts(post, event=event)
                     if self.cfg.trigger.like_when_comment:
                         await self.service.like_posts(post)
                     await self.sender.send_post(
@@ -158,7 +158,7 @@ class QzonePlugin(Star):
         posts = await self._get_posts(event, no_commented=True, no_self=True)
         for post in posts:
             try:
-                await self.service.comment_posts(post)
+                await self.service.comment_posts(post, event=event)
                 msg = "已评论"
                 if self.cfg.trigger.like_when_comment:
                     await self.service.like_posts(post)
@@ -201,7 +201,9 @@ class QzonePlugin(Star):
         group_id = event.get_group_id()
         topic = event.message_str.partition(" ")[2]
         try:
-            text = await self.llm.generate_post(group_id=group_id, topic=topic)
+            text = await self.llm.generate_post(
+                group_id=group_id, topic=topic, event=event
+            )
         except Exception as e:
             yield event.plain_result(str(e))
             logger.error(e)
@@ -243,7 +245,7 @@ class QzonePlugin(Star):
             yield event.plain_result(f"稿件#{post_id}不存在")
             return
         try:
-            await self.service.reply_comment(post, index=comment_index)
+            await self.service.reply_comment(post, index=comment_index, event=event)
             await self.sender.send_post(event, post, message="已回复评论")
         except Exception as e:
             await event.send(event.plain_result(str(e)))
@@ -323,11 +325,11 @@ class QzonePlugin(Star):
             msg = ""
 
             if like and reply:
-                await self.service.comment_posts(post)
+                await self.service.comment_posts(post, event=event)
                 await self.service.like_posts(post)
                 msg = "已评论并点赞"
             elif reply:
-                await self.service.comment_posts(post)
+                await self.service.comment_posts(post, event=event)
                 msg = "已评论"
             elif like:
                 await self.service.like_posts(post)

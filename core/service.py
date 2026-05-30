@@ -2,6 +2,9 @@ import time
 from typing import Any
 
 from astrbot.api import logger
+from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
+    AiocqhttpMessageEvent,
+)
 
 from .db import PostDB
 from .llm_action import LLMAction
@@ -224,12 +227,14 @@ class PostService:
         await self.qzone.like(post)
         logger.info(f"已点赞 → {post.name}")
 
-    async def comment_posts(self, post: Post):
+    async def comment_posts(
+        self, post: Post, event: AiocqhttpMessageEvent | None = None
+    ):
         """评论帖子"""
         if not post.tid:
             raise ValueError("帖子 tid 为空")
 
-        content = await self.llm.generate_comment(post)
+        content = await self.llm.generate_comment(post, event=event)
         if not content:
             raise ValueError("生成评论内容为空")
 
@@ -250,7 +255,12 @@ class PostService:
         await self.db.save(post)
         logger.info(f"评论 → {post.name}")
 
-    async def reply_comment(self, post: Post, index: int):
+    async def reply_comment(
+        self,
+        post: Post,
+        index: int,
+        event: AiocqhttpMessageEvent | None = None,
+    ):
         """回复评论（自动排除自己的评论）"""
 
         if not post.tid:
@@ -272,7 +282,7 @@ class PostService:
         comment = other_comments[index]
 
         # 生成回复
-        content = await self.llm.generate_reply(post, comment)
+        content = await self.llm.generate_reply(post, comment, event=event)
         if not content:
             raise ValueError("生成回复内容为空")
 

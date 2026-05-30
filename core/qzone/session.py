@@ -56,10 +56,12 @@ class QzoneSession:
         if not self.cfg.client:
             raise RuntimeError("CQHttp 实例不存在")
 
-        info = await self.cfg.client.get_login_info()
-        cookies_str = str(info.get("cookies", "")).strip()
+        payload = await self.cfg.client.get_cookies(domain=self.DOMAIN)
+        cookies_str = ""
+        if isinstance(payload, dict):
+            cookies_str = str(payload.get("cookies") or "").strip()
         if not cookies_str:
-            raise RuntimeError("get_login_info 未返回可用 Cookie")
+            raise RuntimeError("get_cookies 未返回可用 Cookie")
 
         c = {k: v.value for k, v in SimpleCookie(cookies_str).items()}
         uin_text = c.get("uin", "0")

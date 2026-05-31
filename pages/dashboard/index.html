@@ -1,0 +1,87 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>QQ空间</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="rail">
+        <div class="account" id="accountBox">
+          <span class="avatar"></span>
+          <div>
+            <strong id="accountName">未读号</strong>
+            <span id="accountMeta">等待状态</span>
+          </div>
+        </div>
+
+        <nav class="tabs" aria-label="动态范围">
+          <button class="tab active" data-scope="friends" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+            好友动态
+          </button>
+          <button class="tab" data-scope="self" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+            我的空间
+          </button>
+          <button class="tab" data-scope="profile" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            指定 QQ
+          </button>
+        </nav>
+
+        <form class="target-form" id="targetForm">
+          <label for="targetUin">QQ 号</label>
+          <div class="target-row">
+            <input id="targetUin" inputmode="numeric" autocomplete="off" placeholder="输入 QQ 号" />
+            <button type="submit" aria-label="查询">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section class="timeline">
+        <form class="composer" id="publishForm">
+          <textarea id="publishContent" rows="4" maxlength="1200" placeholder="写点什么，发到 QQ 空间"></textarea>
+          <div class="media-strip" id="mediaStrip"></div>
+          <div class="composer-actions">
+            <label class="upload-button">
+              <input id="mediaInput" type="file" accept="image/*" multiple />
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+              <span>添加图片</span>
+            </label>
+            <button id="publishButton" class="primary" type="submit">发布说说</button>
+          </div>
+        </form>
+
+        <div class="toolbar">
+          <div>
+            <strong id="feedTitle">好友动态</strong>
+            <span id="feedMeta">准备加载</span>
+          </div>
+          <button id="refreshButton" class="icon-button" type="button" title="刷新" aria-label="刷新">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+          </button>
+        </div>
+
+        <div class="notice" id="notice" hidden></div>
+        <div class="feed" id="feed"></div>
+        <button id="moreButton" class="load-more" type="button" hidden>加载更多</button>
+      </section>
+
+      <aside class="detail" id="detailPane" aria-label="说说详情">
+        <div class="detail-empty" id="detailEmpty">
+          <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3; margin-bottom: 12px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+          <strong>选择一条说说</strong>
+          <span>详情、评论和回复会显示在这里。</span>
+        </div>
+        <div id="detailContent" hidden></div>
+      </aside>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

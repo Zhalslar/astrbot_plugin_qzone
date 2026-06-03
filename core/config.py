@@ -188,27 +188,24 @@ class PluginConfig(ConfigNode):
             zoneinfo.ZoneInfo(tz) if tz else zoneinfo.ZoneInfo("Asia/Shanghai")
         )
 
-        self.admins_id: list[str] = context.get_config().get("admins_id", [])
+        self.admins_id = self._numeric_ids(context.get_config().get("admins_id", []))
         self._normalize_id()
         self.admin_id = self.admins_id[0] if self.admins_id else None
         self.save_config()
 
         self.client: CQHttp | None = None
 
+    @staticmethod
+    def _numeric_ids(ids: list[Any] | None) -> list[str]:
+        return [s for s in map(str, ids or []) if s.isdigit()]
+
     def _normalize_id(self):
         """仅保留纯数字ID"""
         for ids in [
-            self.admins_id,
             self.source.ignore_groups,
             self.source.ignore_users,
         ]:
-            normalized = []
-            for raw in ids:
-                s = str(raw)
-                if s.isdigit():
-                    normalized.append(s)
-            ids.clear()
-            ids.extend(normalized)
+            ids[:] = self._numeric_ids(ids)
 
     def append_ignore_users(self, uid: str | list[str]):
         uids = [uid] if isinstance(uid, str) else uid

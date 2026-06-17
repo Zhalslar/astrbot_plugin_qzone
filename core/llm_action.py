@@ -263,12 +263,27 @@ class LLMAction:
             )
 
             logger.debug(prompt)
-            llm_response = await provider.text_chat(
-                system_prompt=system_prompt,
-                prompt=prompt,
-                contexts=contexts,
-                image_urls=post.images,
-            )
+            # 先尝试带图片调用，若 LLM 不支持 vision 则降级为纯文本
+            try:
+                llm_response = await provider.text_chat(
+                    system_prompt=system_prompt,
+                    prompt=prompt,
+                    contexts=contexts,
+                    image_urls=post.images if post.images else None,
+                )
+            except Exception as img_err:
+                err_msg = str(img_err).lower()
+                if "image_url" in err_msg or "image" in err_msg:
+                    logger.warning(
+                        f"当前 LLM 不支持 vision，降级为纯文本评论: {img_err}"
+                    )
+                    llm_response = await provider.text_chat(
+                        system_prompt=system_prompt,
+                        prompt=prompt,
+                        contexts=contexts,
+                    )
+                else:
+                    raise
             comment = re.sub(r"[\s\u3000]+", "", llm_response.completion_text).rstrip(
                 "。"
             )

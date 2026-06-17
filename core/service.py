@@ -63,7 +63,8 @@ class PostService:
                 raise RuntimeError(self._map_feed_error(resp, target_id=target_id))
             msglist = resp.data.get("msglist") or []
             if not msglist:
-                raise RuntimeError(f"QQ {target_id} 暂无可见说说")
+                logger.info(f"QQ {target_id} 暂无可见说说（非错误，返回空列表）")
+                return []
             posts: list[Post] = QzoneParser.parse_feeds(msglist)
 
         else:

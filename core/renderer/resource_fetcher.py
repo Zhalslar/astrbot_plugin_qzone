@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import socket
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import aiofiles
 import aiohttp
@@ -123,6 +124,36 @@ class ResourceFetcher:
         return self.resource_dir / f"{prefix}_{digest}{suffix}"
 
     async def _download_bytes(self, url: str) -> bytes | None:
+        """读取本地资源或下载网络资源。
+
+        AstrBot 的图片组件可能提供本地临时文件路径，而不一定是 URL。
+        本地路径和 file:// URI 直接读取；仅 HTTP(S) 地址走网络下载。
+        """
+        source = url.strip()
+        if not source:
+            return None
+
+        parsed = urlparse(source)
+        if parsed.scheme == "file":
+            local_path = Path(unquote(parsed.path))
+        elif parsed.scheme == "":
+            local_path = Path(source)
+        elif parsed.scheme not in ("http", "https"):
+            logger.error(f"不支持的资源地址协议: {parsed.scheme}: {source}")
+            return None
+        else:
+            local_path = None
+
+        if local_path is not None:
+            try:
+                if not local_path.is_file():
+                    logger.error(f"本地资源不存在或不是文件: {local_path}")
+                    return None
+                return await asyncio.to_thread(local_path.read_bytes)
+            except Exception as exc:
+                logger.error(f"读取本地资源失败: {local_path} -> {exc}", exc_info=True)
+                return None
+
         errors: list[str] = []
 
         for delay in (0.0, *self._RETRY_DELAYS):

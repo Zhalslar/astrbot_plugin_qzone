@@ -1,5 +1,12 @@
 # Changelog
 
+## v3.1.2
+
+Bug Fixes:
+
+* 将内置卡片渲染器的头像与资源缓存移至插件数据目录（`data_dir / cache`），防止被 AstrBot 定时清理误删。
+* 增加缓存 TTL 校验与过期自动清理机制（默认 1 天）。
+
 ## v3.1.1
 
 Bug Fixes:

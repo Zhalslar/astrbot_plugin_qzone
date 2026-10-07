@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import socket
+import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -69,6 +70,7 @@ async def get_avatar(user_id: str) -> bytes | None:
 
 class ResourceFetcher:
     _RETRY_DELAYS = (0.5, 1.0)
+    _CACHE_TTL = 86400  # 1 天过期
 
     def __init__(self, config: PluginConfig):
         self.cfg = config
@@ -82,6 +84,25 @@ class ResourceFetcher:
             ),
             "Accept": "*/*",
         }
+        self._cleanup_expired_cache()
+
+    def _cleanup_expired_cache(self) -> None:
+        """清理已过期的本地缓存文件"""
+        now = time.time()
+        try:
+            for item in self.resource_dir.iterdir():
+                if item.is_file() and now - item.stat().st_mtime > self._CACHE_TTL:
+                    try:
+                        item.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+        except Exception as exc:
+            logger.debug(f"清理过期资源缓存异常: {exc}")
+
+    def _is_cache_valid(self, path: Path) -> bool:
+        if not path.exists():
+            return False
+        return (time.time() - path.stat().st_mtime) <= self._CACHE_TTL
 
     async def fetch_url_to_cache(
         self,
@@ -94,7 +115,7 @@ class ResourceFetcher:
             return None
 
         cache_path = self._cache_path(prefix=prefix, key=url, suffix=suffix)
-        if cache_path.exists():
+        if self._is_cache_valid(cache_path):
             return cache_path
 
         content = await self._download_bytes(url)
@@ -108,7 +129,7 @@ class ResourceFetcher:
     async def fetch_avatar_to_cache(self, user_id: int | str) -> Path | None:
         user_id_str = str(user_id)
         cache_path = self._cache_path(prefix="avatar", key=user_id_str, suffix=".jpg")
-        if cache_path.exists():
+        if self._is_cache_valid(cache_path):
             return cache_path
 
         content = await get_avatar(user_id_str)

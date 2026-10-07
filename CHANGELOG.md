@@ -1,5 +1,12 @@
 # Changelog
 
+## v3.1.1
+
+Bug Fixes:
+
+* 支持本地文件路径和 `file://` URI 图片上传与卡片渲染。
+* 优化带图发说说失败时的错误提示与响应解析。
+
 ## v3.1.0
 
 New Features:

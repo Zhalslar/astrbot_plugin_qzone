@@ -149,8 +149,6 @@ class TriggerConfig(ConfigNode):
 
 class PluginConfig(ConfigNode):
     manage_group: str
-    use_builtin_renderer: bool
-    pillowmd_style_dir: str
     llm: LLMConfig
     source: SourceConfig
     trigger: TriggerConfig
@@ -172,12 +170,6 @@ class PluginConfig(ConfigNode):
 
         self.db_path = self.data_dir / f"posts_{self._DB_VERSION}.db"
 
-        self.default_style_dir = self.plugin_dir / "default_style"
-        self.style_dir = (
-            Path(self.pillowmd_style_dir).resolve()
-            if self.pillowmd_style_dir
-            else self.default_style_dir
-        )
         self.emoji_cdn = (
             "https://cdn.jsdelivr.net/npm/emoji-datasource-facebook@14.0.0/"
             "img/facebook/64/"

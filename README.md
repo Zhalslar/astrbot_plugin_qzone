@@ -36,6 +36,8 @@ git clone https://github.com/Zhalslar/astrbot_plugin_qzone
 
 请前往插件配置面板进行配置
 
+说说和系统消息统一使用内置卡片渲染器，不再需要配置渲染器或外部样式目录。卡片渲染未生成图片时，发送原始文本。
+
 ### 定时调度说明
 
 - `publish_cron` / `comment_cron` 现在表示任务的**基准时间**（Cron 表达式：分 时 日 月 周）。

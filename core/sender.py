@@ -10,13 +10,13 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from .config import PluginConfig
 from .model import Post
-from .renderer import create_message_renderer
+from .renderer import BuiltinQzoneCardRenderer
 
 
 class Sender:
     def __init__(self, config: PluginConfig):
         self.cfg = config
-        self.renderer = create_message_renderer(config)
+        self.renderer = BuiltinQzoneCardRenderer(config)
 
     async def _post_to_seg(self, post: Post) -> BaseMessageComponent:
         image_path = await self.renderer.render_post(post)

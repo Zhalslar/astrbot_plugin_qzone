@@ -21,7 +21,7 @@ from .constants import (
 
 def _safe_cell(text: str, max_len: int = 30) -> str:
     """
-    pillowmd-safe 的表格单元格：
+    纯文本表格的安全单元格：
     - 无换行
     - 无 |
     - 不为空

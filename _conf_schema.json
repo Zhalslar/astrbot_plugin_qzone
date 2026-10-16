@@ -10,6 +10,12 @@
         "hint": "填写 AstrBot「平台配置」里的实例 ID(如: 刻晴、独角兽)。留空表示不限制, 此时所有 aiocqhttp 平台都会响应指令、并各自使用自己的账号运营 QQ 空间。多 Bot 场景建议显式填写, 避免多个 Bot 互相干扰",
         "default": []
     },
+    "campus_wall_enable": {
+        "description": "启用表白墙投稿",
+        "type": "bool",
+        "hint": "关闭后「投稿 / 匿名投稿 / 撤稿」对群友静默不响应。稿件审核命令「看稿 / 过稿 / 拒稿」不受此开关影响, 仍可供「写说说」的 AI 写稿流程使用",
+        "default": true
+    },
     "llm": {
         "description": "LLM模块配置",
         "type": "object",

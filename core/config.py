@@ -156,11 +156,14 @@ class PluginConfig(ConfigNode):
     timeout: int
     show_name: bool
     allowed_platform_ids: list[str]
+    campus_wall_enable: bool
 
     _DB_VERSION = 5
     _plugin_name = "astrbot_plugin_qzone"
 
     def __init__(self, cfg: AstrBotConfig, context: Context):
+        # 新增开关：老配置文件里没有该键时按「开启」处理，保持与旧版本一致的行为
+        cfg.setdefault("campus_wall_enable", True)
         super().__init__(cfg)
         self.context = context
         # 每个平台适配器实例各自持有一个 CQHttp，避免多 Bot 共用同一个空间身份

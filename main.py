@@ -15,7 +15,11 @@ from .core.config import PluginConfig
 from .core.db import PostDB
 from .core.llm_action import LLMAction
 from .core.model import Comment, Post
-from .core.platform_filter import PlatformAllowedFilter
+from .core.platform_filter import (
+    CampusWallEnabledFilter,
+    PlatformAllowedFilter,
+    set_active_plugin,
+)
 from .core.qzone import QzoneAPI, QzoneParser, QzoneSession
 from .core.scheduler import AutoComment, AutoPublish
 from .core.sender import Sender
@@ -52,6 +56,9 @@ class QzonePlugin(Star):
         self.context = context
         # 配置
         self.cfg = PluginConfig(config, context)
+        # 供 PlatformAllowedFilter / CampusWallEnabledFilter 读取插件自身配置
+        # （框架传给过滤器的 cfg 是 abconf，不含插件配置键）
+        set_active_plugin(self)
         # 数据库（全局共享，与平台无关）
         self.db = PostDB(self.cfg)
         # LLM模块（按事件 umo 解析供应商/人格，故可共享）
@@ -748,6 +755,7 @@ class QzonePlugin(Star):
             await event.send(event.plain_result(str(e)))
             logger.error(e)
 
+    @filter.custom_filter(CampusWallEnabledFilter, False)
     @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("投稿")
     async def contribute_post(self, event: AiocqhttpMessageEvent):
@@ -757,6 +765,7 @@ class QzonePlugin(Star):
             return
         await rt.campus_wall.contribute(event)
 
+    @filter.custom_filter(CampusWallEnabledFilter, False)
     @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("匿名投稿")
     async def anon_contribute_post(self, event: AiocqhttpMessageEvent):
@@ -766,6 +775,7 @@ class QzonePlugin(Star):
             return
         await rt.campus_wall.contribute(event, anon=True)
 
+    @filter.custom_filter(CampusWallEnabledFilter, False)
     @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("撤稿")
     async def recall_post(self, event: AiocqhttpMessageEvent):

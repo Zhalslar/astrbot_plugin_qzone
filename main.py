@@ -1,5 +1,6 @@
 import base64
 import random
+from dataclasses import dataclass
 
 from astrbot.api import logger
 from astrbot.api.event import filter
@@ -14,11 +15,12 @@ from .core.config import PluginConfig
 from .core.db import PostDB
 from .core.llm_action import LLMAction
 from .core.model import Comment, Post
+from .core.platform_filter import PlatformAllowedFilter
 from .core.qzone import QzoneAPI, QzoneParser, QzoneSession
 from .core.scheduler import AutoComment, AutoPublish
 from .core.sender import Sender
 from .core.service import PostService
-from .core.utils import get_ats, get_image_urls, parse_range
+from .core.utils import get_ats, get_event_platform_id, get_image_urls, parse_range
 
 try:
     from quart import jsonify as _quart_jsonify
@@ -28,42 +30,129 @@ except Exception:
     _quart_request = None
 
 
+@dataclass(slots=True)
+class PlatformRuntime:
+    """
+    单个平台适配器实例对应的一整套运行时对象。
+
+    多 Bot 场景下每个 Bot 各持有一份，登录态、评论人身份、
+    表白墙稿件流转都互相隔离，不会出现 A 的 Bot 借用 B 的空间身份。
+    """
+
+    platform_id: str
+    session: QzoneSession
+    qzone: QzoneAPI
+    service: PostService
+    campus_wall: CampusWall
+
+
 class QzonePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.context = context
         # 配置
         self.cfg = PluginConfig(config, context)
-        # 会话
-        self.session = QzoneSession(self.cfg)
-        # QQ空间
-        self.qzone = QzoneAPI(self.session, self.cfg)
-        # 数据库
+        # 数据库（全局共享，与平台无关）
         self.db = PostDB(self.cfg)
-        # LLM模块
+        # LLM模块（按事件 umo 解析供应商/人格，故可共享）
         self.llm = LLMAction(self.cfg)
-        # 消息发送器
+        # 消息发送器（无平台状态，可共享）
         self.sender = Sender(self.cfg)
-        # 操作服务
-        self.service = PostService(self.qzone, self.session, self.db, self.llm)
-        # 表白墙
-        self.campus_wall = CampusWall(self.cfg, self.service, self.db, self.sender)
-        # 自动评论模块
-        self.auto_comment: AutoComment | None = None
-        # 自动发说说模块
-        self.auto_publish: AutoPublish | None = None
+        # 按平台实例隔离的运行时
+        self._runtimes: dict[str, PlatformRuntime] = {}
+        # 自动评论 / 自动发说说（每个启用的平台各一套）
+        self.auto_comments: list[AutoComment] = []
+        self.auto_publishes: list[AutoPublish] = []
+        # 仪表盘页面引用的说说
         self._page_post_refs: dict[str, Post] = {}
         self._register_page_web_apis()
+
+    # ==================== 平台运行时 ====================
+
+    def _build_runtime(self, platform_id: str) -> PlatformRuntime:
+        """为指定平台实例构建一整套隔离的运行时对象。"""
+        session = QzoneSession(self.cfg, platform_id)
+        qzone = QzoneAPI(session, self.cfg)
+        service = PostService(qzone, session, self.db, self.llm)
+        campus_wall = CampusWall(self.cfg, service, self.db, self.sender)
+        return PlatformRuntime(platform_id, session, qzone, service, campus_wall)
+
+    def _rt(
+        self,
+        event: AiocqhttpMessageEvent | None = None,
+        platform_id: str | None = None,
+    ) -> PlatformRuntime | None:
+        """
+        取当前事件所属平台的运行时。
+
+        白名单外的平台直接返回 None，调用方据此跳过处理。
+        """
+        pid = str(platform_id or get_event_platform_id(event) or "")
+        if not pid:
+            pid = self.cfg.default_platform_id()
+        if not pid:
+            logger.error("无法确定平台实例，本次 QQ 空间操作已跳过")
+            return None
+        if not self.cfg.is_platform_allowed(pid):
+            logger.debug(f"平台 [{pid}] 不在 allowed_platform_ids 中，已跳过")
+            return None
+
+        if event is not None:
+            # 事件自带 bot 引用最可靠，顺带覆盖平台重连后的新实例
+            self.cfg.bind_client(pid, getattr(event, "bot", None))
+
+        runtime = self._runtimes.get(pid)
+        if runtime is None:
+            runtime = self._build_runtime(pid)
+            self._runtimes[pid] = runtime
+            logger.info(f"已为平台 [{pid}] 初始化 QQ 空间运行时")
+        return runtime
+
+    def _scheduled_platform_ids(self) -> list[str]:
+        """需要跑定时任务的平台实例 ID 列表。"""
+        allowed = self.cfg.allowed_platforms()
+        if allowed:
+            return allowed
+        ids: list[str] = []
+        try:
+            for inst in self.context.platform_manager.platform_insts:
+                meta = inst.meta()
+                if getattr(meta, "name", "") != "aiocqhttp":
+                    continue
+                pid = str(getattr(meta, "id", ""))
+                if pid:
+                    ids.append(pid)
+        except Exception as e:
+            logger.warning(f"枚举平台实例失败，将跳过定时任务：{e}")
+        return ids
 
     async def initialize(self):
         """插件加载时触发"""
         await self.db.initialize()
+        self._start_schedulers()
 
-        if not self.auto_comment and self.cfg.trigger.comment_cron:
-            self.auto_comment = AutoComment(self.cfg, self.service, self.sender)
+    def _start_schedulers(self) -> None:
+        """为每个目标平台各启动一套定时任务。"""
+        platform_ids = self._scheduled_platform_ids()
+        if not platform_ids:
+            logger.warning("没有可用的 aiocqhttp 平台实例，定时任务未启动")
 
-        if not self.auto_publish and self.cfg.trigger.publish_cron:
-            self.auto_publish = AutoPublish(self.cfg, self.service, self.sender)
+        for platform_id in platform_ids:
+            runtime = self._rt(platform_id=platform_id)
+            if runtime is None:
+                continue
+            if self.cfg.trigger.comment_cron:
+                self.auto_comments.append(
+                    AutoComment(
+                        self.cfg, runtime.service, self.sender, platform_id
+                    )
+                )
+            if self.cfg.trigger.publish_cron:
+                self.auto_publishes.append(
+                    AutoPublish(
+                        self.cfg, runtime.service, self.sender, platform_id
+                    )
+                )
 
     def _register_page_web_apis(self) -> None:
         routes = (
@@ -131,15 +220,19 @@ class QzonePlugin(Star):
         return data if isinstance(data, dict) else {}
 
     async def _build_page_status(self) -> dict:
-        self._capture_page_client()
-        try:
-            uin = await self.session.get_uin()
-            nickname = await self.session.get_nickname()
-            bound = True
-        except Exception:
-            uin = 0
-            nickname = ""
-            bound = False
+        runtime = self._rt()
+        uin = 0
+        nickname = ""
+        bound = False
+        if runtime is not None:
+            try:
+                uin = await runtime.session.get_uin()
+                nickname = await runtime.session.get_nickname()
+                bound = True
+            except Exception:
+                uin = 0
+                nickname = ""
+                bound = False
         return {
             "ok": True,
             "data": {
@@ -162,26 +255,11 @@ class QzonePlugin(Star):
         self._page_post_refs[post_id] = post
         return post_id
 
-    def _capture_page_client(self):
-        if self.cfg.client is not None:
-            return self.cfg.client
-        try:
-            platform = self.context.get_platform("aiocqhttp")
-        except Exception:
-            platform = None
-        if platform is None:
-            try:
-                for candidate in self.context.platform_manager.platform_insts:
-                    meta = candidate.meta()
-                    if getattr(meta, "name", "") == "aiocqhttp":
-                        platform = candidate
-                        break
-            except Exception:
-                platform = None
-        bot = getattr(platform, "bot", None) if platform is not None else None
-        if bot is not None:
-            self.cfg.client = bot
-        return self.cfg.client
+    def _require_page_runtime(self) -> PlatformRuntime:
+        runtime = self._rt()
+        if runtime is None:
+            raise RuntimeError("没有可用的 QQ 空间平台实例")
+        return runtime
 
     def _page_post_payload(
         self,
@@ -235,10 +313,10 @@ class QzonePlugin(Star):
 
     async def page_feed(self):
         async def handler():
-            self._capture_page_client()
+            rt = self._require_page_runtime()
             params = await self._page_query_params()
             scope = str(params.get("scope") or "friends")
-            self_uin = await self.session.get_uin()
+            self_uin = await rt.session.get_uin()
             target_id = None
             no_self = False
             if scope == "self":
@@ -247,7 +325,7 @@ class QzonePlugin(Star):
                 target_id = str(params.get("hostuin") or "").strip() or None
             else:
                 no_self = False
-            posts = await self.service.query_feeds(
+            posts = await rt.service.query_feeds(
                 target_id=target_id,
                 pos=0,
                 num=min(max(int(params.get("limit") or 10), 1), 10),
@@ -270,10 +348,10 @@ class QzonePlugin(Star):
 
     async def page_detail(self):
         async def handler():
-            self._capture_page_client()
+            rt = self._require_page_runtime()
             params = await self._page_query_params()
             post = self._require_page_post(params.get("id", ""))
-            resp = await self.qzone.get_detail(post)
+            resp = await rt.qzone.get_detail(post)
             if not resp.ok or not resp.data:
                 raise RuntimeError(resp.message or "获取详情失败")
             parsed = QzoneParser.parse_feeds([resp.data])
@@ -285,7 +363,7 @@ class QzonePlugin(Star):
                     "post": self._page_post_payload(
                         matched,
                         include_comments=True,
-                        self_uin=await self.session.get_uin(),
+                        self_uin=await rt.session.get_uin(),
                     )
                 },
             }
@@ -294,7 +372,7 @@ class QzonePlugin(Star):
 
     async def page_publish(self):
         async def handler():
-            self._capture_page_client()
+            rt = self._require_page_runtime()
             body = await self._page_json_body()
             media = body.get("media") or []
             images = []
@@ -304,7 +382,7 @@ class QzonePlugin(Star):
                 source = str(item.get("source") or "")
                 if source.startswith("base64://"):
                     images.append(base64.b64decode(source.removeprefix("base64://")))
-            post = await self.service.publish_post(
+            post = await rt.service.publish_post(
                 text=str(body.get("content") or ""),
                 images=images,
             )
@@ -318,10 +396,10 @@ class QzonePlugin(Star):
 
     async def page_like(self):
         async def handler():
-            self._capture_page_client()
+            rt = self._require_page_runtime()
             body = await self._page_json_body()
             post = self._require_page_post(body.get("id", ""))
-            resp = await self.qzone.like(post)
+            resp = await rt.qzone.like(post)
             if not resp.ok:
                 raise RuntimeError(resp.message or "点赞失败")
             return {"ok": True, "data": {"liked": True, "verified": True}}
@@ -330,21 +408,21 @@ class QzonePlugin(Star):
 
     async def page_comment(self):
         async def handler():
-            self._capture_page_client()
+            rt = self._require_page_runtime()
             body = await self._page_json_body()
             post = self._require_page_post(body.get("id", ""))
             content = str(body.get("content") or "").strip()
             if not content:
                 raise RuntimeError("评论内容不能为空")
-            resp = await self.qzone.comment(post, content)
+            resp = await rt.qzone.comment(post, content)
             if not resp.ok:
                 raise RuntimeError(resp.message or "评论失败")
             comment = {
                 "id": f"local-{len(post.comments) + 1}",
                 "content": content,
                 "author": {
-                    "uin": await self.session.get_uin(),
-                    "nickname": await self.session.get_nickname(),
+                    "uin": await rt.session.get_uin(),
+                    "nickname": await rt.session.get_nickname(),
                     "avatar": "",
                 },
             }
@@ -364,7 +442,7 @@ class QzonePlugin(Star):
 
     async def page_reply(self):
         async def handler():
-            self._capture_page_client()
+            rt = self._require_page_runtime()
             body = await self._page_json_body()
             post = self._require_page_post(body.get("id", ""))
             content = str(body.get("content") or "").strip()
@@ -376,15 +454,15 @@ class QzonePlugin(Star):
             )
             if target is None:
                 raise RuntimeError("未找到要回复的评论")
-            resp = await self.qzone.reply(post, target, content)
+            resp = await rt.qzone.reply(post, target, content)
             if not resp.ok:
                 raise RuntimeError(resp.message or "回复失败")
             reply = {
                 "id": str(resp.data.get("tid") or ""),
                 "content": content,
                 "author": {
-                    "uin": await self.session.get_uin(),
-                    "nickname": await self.session.get_nickname(),
+                    "uin": await rt.session.get_uin(),
+                    "nickname": await rt.session.get_nickname(),
                     "avatar": "",
                 },
             }
@@ -404,13 +482,13 @@ class QzonePlugin(Star):
 
     async def page_delete(self):
         async def handler():
-            self._capture_page_client()
+            rt = self._require_page_runtime()
             body = await self._page_json_body()
             post = self._require_page_post(body.get("id", ""))
-            self_uin = await self.session.get_uin()
+            self_uin = await rt.session.get_uin()
             if int(post.uin) != int(self_uin):
                 raise RuntimeError("只能删除自己发布的说说")
-            resp = await self.qzone.delete(str(post.tid or ""))
+            resp = await rt.qzone.delete(str(post.tid or ""))
             if not resp.ok:
                 raise RuntimeError(resp.message or "删除失败")
             return {"ok": True, "data": {}, "message": "说说已删除。"}
@@ -444,19 +522,21 @@ class QzonePlugin(Star):
 
     async def terminate(self):
         """插件卸载时"""
-        if self.qzone:
-            await self.qzone.close()
-        if self.auto_comment:
-            await self.auto_comment.terminate()
-        if self.auto_publish:
-            await self.auto_publish.terminate()
+        for runtime in self._runtimes.values():
+            await runtime.qzone.close()
+        self._runtimes.clear()
+        for task in [*self.auto_comments, *self.auto_publishes]:
+            await task.terminate()
+        self.auto_comments.clear()
+        self.auto_publishes.clear()
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
+    @filter.custom_filter(PlatformAllowedFilter, False)
     async def prob_read_feed(self, event: AiocqhttpMessageEvent):
         """监听消息"""
-        if not self.cfg.client:
-            self.cfg.client = event.bot
-            logger.debug("QQ空间所需的 CQHttp 客户端已初始化")
+        rt = self._rt(event)
+        if rt is None:
+            return
 
         # 按概率触发点赞+评论
         sender_id = event.get_sender_id()
@@ -465,14 +545,14 @@ class QzonePlugin(Star):
             and random.random() < self.cfg.trigger.read_prob
         ):
             target_id = event.get_sender_id()
-            posts = await self.service.query_feeds(
+            posts = await rt.service.query_feeds(
                 target_id=target_id, pos=0, num=1, no_self=True, no_commented=True
             )
             for post in posts:
                 try:
-                    await self.service.comment_posts(post, event=event)
+                    await rt.service.comment_posts(post, event=event)
                     if self.cfg.trigger.like_when_comment:
-                        await self.service.like_posts(post)
+                        await rt.service.like_posts(post)
                     await self.sender.send_post(
                         event,
                         post,
@@ -483,11 +563,15 @@ class QzonePlugin(Star):
                     logger.error(e)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("查看访客")
     async def view_visitor(self, event: AiocqhttpMessageEvent):
         """查看访客"""
+        rt = self._rt(event)
+        if rt is None:
+            return
         try:
-            msg = await self.service.view_visitor()
+            msg = await rt.service.view_visitor()
             await self.sender.send_msg(event, msg)
         except Exception as e:
             yield event.plain_result(str(e))
@@ -502,6 +586,9 @@ class QzonePlugin(Star):
         no_commented=False,
         no_self=False,
     ) -> list[Post]:
+        rt = self._rt(event)
+        if rt is None:
+            return []
         pos, num = parse_range(event)
         at_ids = get_ats(event)
         if not target_id:
@@ -513,7 +600,7 @@ class QzonePlugin(Star):
             logger.debug(
                 f"正在查询说说： {target_id, pos, num, with_detail, no_commented, no_self}"
             )
-            posts = await self.service.query_feeds(
+            posts = await rt.service.query_feeds(
                 target_id=target_id,
                 pos=pos,
                 num=num,
@@ -531,6 +618,7 @@ class QzonePlugin(Star):
             event.stop_event()
             return []
 
+    @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("看说说", alias={"查看说说"})
     async def view_feed(self, event: AiocqhttpMessageEvent):
         """
@@ -540,42 +628,54 @@ class QzonePlugin(Star):
         for post in posts:
             await self.sender.send_post(event, post)
 
+    @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("评说说", alias={"评论说说", "读说说"})
     async def comment_feed(self, event: AiocqhttpMessageEvent):
         """评说说 <序号/范围>"""
+        rt = self._rt(event)
+        if rt is None:
+            return
         posts = await self._get_posts(event, no_commented=True, no_self=True)
         for post in posts:
             try:
-                await self.service.comment_posts(post, event=event)
+                await rt.service.comment_posts(post, event=event)
                 msg = "已评论"
                 if self.cfg.trigger.like_when_comment:
-                    await self.service.like_posts(post)
+                    await rt.service.like_posts(post)
                     msg += "并点赞"
                 await self.sender.send_post(event, post, message=msg)
             except Exception as e:
                 await event.send(event.plain_result(str(e)))
                 logger.error(e)
 
+    @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("赞说说")
     async def like_feed(self, event: AiocqhttpMessageEvent):
         """赞说说 <序号/范围>"""
+        rt = self._rt(event)
+        if rt is None:
+            return
         posts = await self._get_posts(event)
         for post in posts:
             try:
-                await self.service.like_posts(post)
+                await rt.service.like_posts(post)
                 await self.sender.send_post(event, post, message="已点赞")
             except Exception as e:
                 await event.send(event.plain_result(str(e)))
                 logger.error(e)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("发说说")
     async def publish_feed(self, event: AiocqhttpMessageEvent):
         """发说说 <内容> <图片>, 由用户指定内容"""
+        rt = self._rt(event)
+        if rt is None:
+            return
         text = event.message_str.partition(" ")[2]
         images = await get_image_urls(event)
         try:
-            post = await self.service.publish_post(text=text, images=images)
+            post = await rt.service.publish_post(text=text, images=images)
             await self.sender.send_post(event, post, message="已发布")
             event.stop_event()
         except Exception as e:
@@ -583,6 +683,7 @@ class QzonePlugin(Star):
             logger.error(e)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("写说说", alias={"写稿"})
     async def write_feed(self, event: AiocqhttpMessageEvent):
         """写说说 <主题> <图片>, 由AI写完后管理员用‘通过稿件 ID’命令发布"""
@@ -611,69 +712,101 @@ class QzonePlugin(Star):
         await self.sender.send_post(event, post)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("删说说")
     async def delete_feed(self, event: AiocqhttpMessageEvent):
         """删说说 <稿件ID>"""
+        rt = self._rt(event)
+        if rt is None:
+            return
         posts = await self._get_posts(event, target_id=event.get_self_id())
         for post in posts:
             try:
                 await self.sender.send_post(event, post, message="已删除说说")
-                await self.service.delete_post(post)
+                await rt.service.delete_post(post)
             except Exception as e:
                 await event.send(event.plain_result(str(e)))
                 logger.error(e)
 
+    @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("回评", alias={"回复评论"})
     async def reply_comment(
         self, event: AiocqhttpMessageEvent, post_id: int = -1, comment_index: int = -1
     ):
         """回评 <稿件ID> <评论序号>, 默认回复最后一条非己评论"""
+        rt = self._rt(event)
+        if rt is None:
+            return
         post = await self.db.get(post_id)
         if not post:
             yield event.plain_result(f"稿件#{post_id}不存在")
             return
         try:
-            await self.service.reply_comment(post, index=comment_index, event=event)
+            await rt.service.reply_comment(post, index=comment_index, event=event)
             await self.sender.send_post(event, post, message="已回复评论")
         except Exception as e:
             await event.send(event.plain_result(str(e)))
             logger.error(e)
 
+    @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("投稿")
     async def contribute_post(self, event: AiocqhttpMessageEvent):
         """投稿 <内容> <图片>"""
-        await self.campus_wall.contribute(event)
+        rt = self._rt(event)
+        if rt is None:
+            return
+        await rt.campus_wall.contribute(event)
 
+    @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("匿名投稿")
     async def anon_contribute_post(self, event: AiocqhttpMessageEvent):
         """匿名投稿 <内容> <图片>"""
-        await self.campus_wall.contribute(event, anon=True)
+        rt = self._rt(event)
+        if rt is None:
+            return
+        await rt.campus_wall.contribute(event, anon=True)
 
+    @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("撤稿")
     async def recall_post(self, event: AiocqhttpMessageEvent):
         """删除稿件 <稿件ID>"""
-        async for msg in self.campus_wall.delete(event):
+        rt = self._rt(event)
+        if rt is None:
+            return
+        async for msg in rt.campus_wall.delete(event):
             yield msg
 
     @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("看稿", alias={"查看稿件"})
     async def view_post(self, event: AiocqhttpMessageEvent):
         "查看稿件 <稿件ID>, 默认最新稿件"
-        async for msg in self.campus_wall.view(event):
+        rt = self._rt(event)
+        if rt is None:
+            return
+        async for msg in rt.campus_wall.view(event):
             yield msg
 
     @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("过稿", alias={"通过稿件", "通过投稿"})
     async def approve_post(self, event: AiocqhttpMessageEvent):
         """通过稿件 <稿件ID>"""
-        async for msg in self.campus_wall.approve(event):
+        rt = self._rt(event)
+        if rt is None:
+            return
+        async for msg in rt.campus_wall.approve(event):
             yield msg
 
     @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.custom_filter(PlatformAllowedFilter, False)
     @filter.command("拒稿", alias={"拒绝稿件", "拒绝投稿"})
     async def reject_post(self, event: AiocqhttpMessageEvent):
         """拒绝稿件 <稿件ID> <原因>"""
-        async for msg in self.campus_wall.reject(event):
+        rt = self._rt(event)
+        if rt is None:
+            return
+        async for msg in rt.campus_wall.reject(event):
             yield msg
 
     @filter.llm_tool()
@@ -693,11 +826,14 @@ class QzonePlugin(Star):
             like(boolean): 是否点赞
             reply(boolean): 是否评论
         """
+        rt = self._rt(event)
+        if rt is None:
+            return "当前平台未启用 QQ 空间功能"
         try:
             user_id = user_id or event.get_sender_id()
             logger.debug(f"正在查询用户（{user_id}）的第 {pos} 条说说")
 
-            posts = await self.service.query_feeds(
+            posts = await rt.service.query_feeds(
                 target_id=user_id,
                 pos=pos,
                 num=1,
@@ -713,14 +849,14 @@ class QzonePlugin(Star):
             msg = ""
 
             if like and reply:
-                await self.service.comment_posts(post, event=event)
-                await self.service.like_posts(post)
+                await rt.service.comment_posts(post, event=event)
+                await rt.service.like_posts(post)
                 msg = "已评论并点赞"
             elif reply:
-                await self.service.comment_posts(post, event=event)
+                await rt.service.comment_posts(post, event=event)
                 msg = "已评论"
             elif like:
-                await self.service.like_posts(post)
+                await rt.service.like_posts(post)
                 msg = "已点赞"
 
             # 发送展示
@@ -745,9 +881,12 @@ class QzonePlugin(Star):
             text(string): 要发布的说说内容
             get_image(boolean): 是否获取当前对话中的图片附加到说说里, 默认为True
         """
+        rt = self._rt(event)
+        if rt is None:
+            return "当前平台未启用 QQ 空间功能"
         images = await get_image_urls(event) if get_image else []
         try:
-            post = await self.service.publish_post(text=text, images=images)
+            post = await rt.service.publish_post(text=text, images=images)
             await self.sender.send_post(event, post, message="已发布")
             return "已发布说说到QQ空间: \n" + post.text + "\n" + "\n".join(post.images)
         except Exception as e:

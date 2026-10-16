@@ -155,6 +155,7 @@ class PluginConfig(ConfigNode):
     cookie_ttl: int
     timeout: int
     show_name: bool
+    allowed_platform_ids: list[str]
 
     _DB_VERSION = 5
     _plugin_name = "astrbot_plugin_qzone"
@@ -162,6 +163,8 @@ class PluginConfig(ConfigNode):
     def __init__(self, cfg: AstrBotConfig, context: Context):
         super().__init__(cfg)
         self.context = context
+        # 每个平台适配器实例各自持有一个 CQHttp，避免多 Bot 共用同一个空间身份
+        self._clients: dict[str, CQHttp] = {}
         self.data_dir = Path(get_astrbot_plugin_data_path()) / self._plugin_name
         self.plugin_dir = Path(get_astrbot_plugin_path()) / self._plugin_name
         self.temp_dir = Path(get_astrbot_temp_path()) / self._plugin_name
@@ -185,7 +188,96 @@ class PluginConfig(ConfigNode):
         self.admin_id = self.admins_id[0] if self.admins_id else None
         self.save_config()
 
-        self.client: CQHttp | None = None
+    # ==================== 多平台（多 Bot）支持 ====================
+
+    def allowed_platforms(self) -> list[str]:
+        """平台白名单。为空表示不限制，兼容单 Bot 场景。"""
+        raw = self.allowed_platform_ids or []
+        return [str(item).strip() for item in raw if str(item).strip()]
+
+    def is_platform_allowed(self, platform_id: str | None) -> bool:
+        """事件所属平台是否被允许处理。白名单为空时一律允许。"""
+        allowed = self.allowed_platforms()
+        if not allowed:
+            return True
+        return str(platform_id or "") in allowed
+
+    def find_platform(self, platform_id: str):
+        """按平台实例 ID 查找 AstrBot 平台适配器。"""
+        target = str(platform_id or "")
+        if not target:
+            return None
+        try:
+            for inst in self.context.platform_manager.platform_insts:
+                if str(getattr(inst.meta(), "id", "")) == target:
+                    return inst
+        except Exception as e:
+            logger.debug(f"查找平台实例 {target} 失败: {e}")
+        return None
+
+    def bind_client(self, platform_id: str, bot: CQHttp | None) -> CQHttp | None:
+        """登记某平台实例的 CQHttp 客户端。"""
+        bot = bot or None
+        key = str(platform_id or "")
+        if bot is None or not key:
+            return None
+        self._clients[key] = bot
+        return bot
+
+    def resolve_client(self, platform_id: str | None = None) -> CQHttp | None:
+        """
+        取指定平台的 CQHttp 客户端。
+
+        传入 platform_id 时只返回该平台自己的客户端；不传时返回"默认平台"的客户端
+        （Web API 等没有事件上下文的场景使用）。
+        """
+        key = str(platform_id or "")
+        if key:
+            bot = self._clients.get(key)
+            if bot is not None:
+                return bot
+            inst = self.find_platform(key)
+            bot = getattr(inst, "bot", None) if inst is not None else None
+            if bot is not None:
+                self._clients[key] = bot
+            return bot
+
+        return self.default_client()
+
+    def default_platform_id(self) -> str:
+        """默认平台 ID：优先白名单首个，其次首个已绑定的平台，最后兜底第一个 aiocqhttp。"""
+        allowed = self.allowed_platforms()
+        if allowed:
+            return allowed[0]
+        if self._clients:
+            return next(iter(self._clients))
+        inst = self._first_aiocqhttp_platform()
+        if inst is not None:
+            return str(getattr(inst.meta(), "id", ""))
+        return ""
+
+    def default_client(self) -> CQHttp | None:
+        """默认平台的客户端，供无事件上下文的调用点使用。"""
+        platform_id = self.default_platform_id()
+        if platform_id:
+            return self.resolve_client(platform_id)
+        inst = self._first_aiocqhttp_platform()
+        return getattr(inst, "bot", None) if inst is not None else None
+
+    def _first_aiocqhttp_platform(self):
+        try:
+            platform = self.context.get_platform("aiocqhttp")
+            if platform is not None:
+                return platform
+        except Exception:
+            pass
+        try:
+            for candidate in self.context.platform_manager.platform_insts:
+                if getattr(candidate.meta(), "name", "") == "aiocqhttp":
+                    return candidate
+        except Exception as e:
+            logger.debug(f"查找 aiocqhttp 平台失败: {e}")
+        return None
 
     def _normalize_id(self):
         """仅保留纯数字ID"""

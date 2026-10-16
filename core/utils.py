@@ -12,6 +12,32 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 BytesOrStr = Union[str, bytes]  # noqa: UP007
 
 
+def get_event_platform_id(event: object | None) -> str:
+    """
+    获取事件所属平台适配器实例的唯一 ID。
+
+    多 Bot 场景下同一个插件实例会被多个平台适配器共享，
+    必须用这个 ID 才能区分"当前这条消息来自哪个 Bot"。
+    """
+    if event is None:
+        return ""
+
+    getter = getattr(event, "get_platform_id", None)
+    if callable(getter):
+        try:
+            platform_id = getter()
+        except Exception:
+            platform_id = None
+        if platform_id:
+            return str(platform_id)
+
+    # 兜底：umo 形如 "platform_id:message_type:session_id"
+    umo = getattr(event, "unified_msg_origin", None)
+    if umo and ":" in str(umo):
+        return str(umo).split(":", 1)[0]
+    return ""
+
+
 def get_ats(event: AiocqhttpMessageEvent) -> list[str]:
     """获取被at者们的id列表,(@增强版)"""
     ats = [str(seg.qq) for seg in event.get_messages()[1:] if isinstance(seg, At)]

@@ -75,7 +75,7 @@ class Sender:
         message: str = "",
     ):
         """通知管理群或管理员"""
-        client = client or self.cfg.client
+        client = client or self.cfg.default_client()
         if not client:
             logger.error("缺少客户端，无法发送消息")
             return
@@ -102,7 +102,7 @@ class Sender:
         message: str = "",
     ):
         """通知投稿者"""
-        client = client or self.cfg.client
+        client = client or self.cfg.default_client()
         if not client:
             logger.error("缺少客户端，无法发送消息")
             return

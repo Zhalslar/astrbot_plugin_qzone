@@ -130,11 +130,15 @@ class AutoComment(AutoRandomCronTask):
         config: PluginConfig,
         service: PostService,
         sender: Sender,
+        platform_id: str = "",
     ):
         cron = config.trigger.comment_cron
         timezone = config.timezone
         offset = config.trigger.comment_offset
-        super().__init__("AutoComment", cron, timezone, offset)
+        self.platform_id = str(platform_id or "")
+        super().__init__(
+            f"AutoComment[{self.platform_id or 'default'}]", cron, timezone, offset
+        )
         self.cfg = config
         self.service = service
         self.sender = sender
@@ -151,7 +155,11 @@ class AutoComment(AutoRandomCronTask):
                 await self.service.comment_posts(post)
                 if self.cfg.trigger.like_when_comment:
                     await self.service.like_posts(post)
-                await self.sender.send_admin_post(post, message="定时读说说")
+                await self.sender.send_admin_post(
+                    post,
+                    client=self.cfg.resolve_client(self.platform_id),
+                    message="定时读说说",
+                )
             except Exception as e:
                 logger.exception(
                     f"[{self.job_name}] 跳过说说评论失败: tid={post.tid}, uin={post.uin}, name={post.name}, error={e}"
@@ -164,19 +172,32 @@ class AutoPublish(AutoRandomCronTask):
         config: PluginConfig,
         service: PostService,
         sender: Sender,
+        platform_id: str = "",
     ):
         cron = config.trigger.publish_cron
         timezone = config.timezone
         offset = config.trigger.publish_offset
-        super().__init__("AutoPublish", cron, timezone, offset)
+        self.platform_id = str(platform_id or "")
+        super().__init__(
+            f"AutoPublish[{self.platform_id or 'default'}]", cron, timezone, offset
+        )
+        self.cfg = config
         self.service = service
         self.sender = sender
 
     async def do_task(self):
         try:
-            text = await self.service.llm.generate_post()
+            text = await self.service.llm.generate_post(platform_id=self.platform_id)
         except Exception as e:
-            logger.error(f"自动生成内容失败：{e}")
+            logger.error(f"[{self.job_name}] 自动生成内容失败：{e}")
             return
-        post = await self.service.publish_post(text=text)
-        await self.sender.send_admin_post(post, message="定时发说说")
+        try:
+            post = await self.service.publish_post(text=text)
+        except Exception as e:
+            logger.error(f"[{self.job_name}] 自动发布失败：{e}")
+            return
+        await self.sender.send_admin_post(
+            post,
+            client=self.cfg.resolve_client(self.platform_id),
+            message="定时发说说",
+        )

@@ -4,6 +4,12 @@
         "type": "string",
         "hint": "bot收到的投稿将在管理群里审批, 不填则将审批信息私发给bot管理员"
     },
+    "allowed_platform_ids": {
+        "description": "允许使用本插件的平台实例",
+        "type": "list",
+        "hint": "填写 AstrBot「平台配置」里的实例 ID(如: 刻晴、独角兽)。留空表示不限制, 此时所有 aiocqhttp 平台都会响应指令、并各自使用自己的账号运营 QQ 空间。多 Bot 场景建议显式填写, 避免多个 Bot 互相干扰",
+        "default": []
+    },
     "llm": {
         "description": "LLM模块配置",
         "type": "object",

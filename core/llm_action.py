@@ -3,11 +3,14 @@ import random
 import re
 from typing import Any
 
+from aiocqhttp import CQHttp
+
 from astrbot.api import logger
 from astrbot.core.provider.provider import Provider
 
 from .config import PluginConfig
 from .model import Comment, Post
+from .utils import get_event_platform_id
 
 
 class LLMAction:
@@ -38,12 +41,31 @@ class LLMAction:
                 contexts.append({"role": "user", "content": text})
         return contexts
 
-    async def _get_msg_contexts(self, group_id: str) -> list[dict]:
-        """获取群聊历史消息"""
+    def _client(self, platform_id: str | None = None) -> CQHttp:
+        """取指定平台的 OneBot 客户端；不传时取默认平台。"""
+        client = (
+            self.cfg.resolve_client(platform_id)
+            if platform_id
+            else self.cfg.default_client()
+        )
+        if client is None:
+            raise RuntimeError(
+                f"平台 [{platform_id or 'default'}] 的 CQHttp 客户端未初始化"
+            )
+        return client
+
+    async def _get_msg_contexts(
+        self,
+        group_id: str,
+        platform_id: str | None = None,
+    ) -> list[dict]:
+        """获取群聊历史消息
+
+        显式使用该平台自己的 Bot 拉取，避免 A 的 Bot 去读 B 的群。
+        """
         message_seq = 0
         contexts: list[dict] = []
-        if not self.cfg.client:
-            raise RuntimeError("客户端未初始化")
+        client = self._client(platform_id)
         while len(contexts) < self.cfg.source.post_max_msg:
             payloads = {
                 "group_id": group_id,
@@ -51,7 +73,7 @@ class LLMAction:
                 "count": 200,
                 "reverseOrder": True,
             }
-            result: dict = await self.cfg.client.api.call_action(
+            result: dict = await client.api.call_action(
                 "get_group_msg_history", **payloads
             )
             round_messages = result["messages"]
@@ -186,29 +208,30 @@ class LLMAction:
         topic: str | None = None,
         *,
         event: Any | None = None,
+        platform_id: str | None = None,
     ) -> str | None:
         """生成帖子"""
+        platform_id = platform_id or get_event_platform_id(event)
         provider = self._get_provider(self.cfg.llm.post_provider_id, event)
         if not isinstance(provider, Provider):
             raise RuntimeError("未配置用于文本生成任务的 LLM 提供商")
 
-        if not self.cfg.client:
-            raise RuntimeError("客户端未初始化")
+        client = self._client(platform_id)
 
         if group_id:
-            contexts = await self._get_msg_contexts(group_id)
+            contexts = await self._get_msg_contexts(group_id, platform_id)
         else:  # 随机获取一个群组
-            group_list = await self.cfg.client.get_group_list()
+            group_list = await client.get_group_list()
             group_ids = [
                 str(group["group_id"])
                 for group in group_list
                 if str(group["group_id"]) not in self.cfg.source.ignore_groups
             ]
             if not group_ids:
-                logger.warning("未找到可用群组")
+                logger.warning(f"[{platform_id or 'default'}] 未找到可用群组")
                 return None
             group_id = random.choice(group_ids)
-            contexts = await self._get_msg_contexts(group_id)
+            contexts = await self._get_msg_contexts(group_id, platform_id)
         # TODO: 更多模式
 
         task_prompt = self._join_prompt_parts(

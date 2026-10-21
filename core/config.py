@@ -142,9 +142,28 @@ class TriggerConfig(ConfigNode):
     publish_offset: int
     comment_cron: str
     comment_offset: int
+    reply_cron: str
+    reply_offset: int
+    reply_feed_num: int
+    reply_max_per_run: int
+    reply_max_age_hours: int
     read_prob: float
     send_admin: bool
     like_when_comment: bool
+
+    # 新增配置项在旧配置文件里可能不存在，这里补齐默认值，避免取值得到 None
+    _DEFAULTS = {
+        "reply_cron": "*/30 * * * *",
+        "reply_offset": 60,
+        "reply_feed_num": 5,
+        "reply_max_per_run": 3,
+        "reply_max_age_hours": 24,
+    }
+
+    def __init__(self, data: MutableMapping[str, Any]):
+        for key, value in self._DEFAULTS.items():
+            data.setdefault(key, value)
+        super().__init__(data)
 
 
 class PluginConfig(ConfigNode):

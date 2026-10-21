@@ -15,7 +15,7 @@ from .core.db import PostDB
 from .core.llm_action import LLMAction
 from .core.model import Comment, Post
 from .core.qzone import QzoneAPI, QzoneParser, QzoneSession
-from .core.scheduler import AutoComment, AutoPublish
+from .core.scheduler import AutoComment, AutoPublish, AutoReply
 from .core.sender import Sender
 from .core.service import PostService
 from .core.utils import get_ats, get_image_urls, parse_range
@@ -50,6 +50,8 @@ class QzonePlugin(Star):
         self.campus_wall = CampusWall(self.cfg, self.service, self.db, self.sender)
         # 自动评论模块
         self.auto_comment: AutoComment | None = None
+        # 自动回复评论模块
+        self.auto_reply: AutoReply | None = None
         # 自动发说说模块
         self.auto_publish: AutoPublish | None = None
         self._page_post_refs: dict[str, Post] = {}
@@ -61,6 +63,14 @@ class QzonePlugin(Star):
 
         if not self.auto_comment and self.cfg.trigger.comment_cron:
             self.auto_comment = AutoComment(self.cfg, self.service, self.sender)
+
+        if not self.auto_reply and self.cfg.trigger.reply_cron:
+            self.auto_reply = AutoReply(
+                self.cfg,
+                self.service,
+                self.sender,
+                client_provider=self._capture_page_client,
+            )
 
         if not self.auto_publish and self.cfg.trigger.publish_cron:
             self.auto_publish = AutoPublish(self.cfg, self.service, self.sender)
@@ -448,6 +458,8 @@ class QzonePlugin(Star):
             await self.qzone.close()
         if self.auto_comment:
             await self.auto_comment.terminate()
+        if self.auto_reply:
+            await self.auto_reply.terminate()
         if self.auto_publish:
             await self.auto_publish.terminate()
 
@@ -537,6 +549,15 @@ class QzonePlugin(Star):
         看说说 <@群友> <序号>
         """
         posts = await self._get_posts(event, with_detail=True)
+        for post in posts:
+            await self.sender.send_post(event, post)
+
+    @filter.command("看我说说", alias={"看我"})
+    async def view_own_feed(self, event: AiocqhttpMessageEvent):
+        """看我说说 <序号/范围>: 查看机器人自己空间里发布的说说"""
+        posts = await self._get_posts(
+            event, target_id=event.get_self_id(), with_detail=True
+        )
         for post in posts:
             await self.sender.send_post(event, post)
 
@@ -688,13 +709,16 @@ class QzonePlugin(Star):
         """
         查看、点赞、评论某位用户QQ空间的某条说说、动态
         Args:
-            user_id(string): 目标用户的QQ账号，必定为一串数字，如(12345678), 默认为当前用户QQ号
+            user_id(string): 目标用户的QQ账号，必定为一串数字，如(12345678), 默认为当前用户QQ号。
+                传 "self" 表示查看你自己（机器人账号）的QQ空间
             pos(number): 要查询的说说序号, 默认为0表示最新
             like(boolean): 是否点赞
             reply(boolean): 是否评论
         """
         try:
-            user_id = user_id or event.get_sender_id()
+            user_id = str(user_id or event.get_sender_id()).strip()
+            if user_id.lower() in {"self", "bot", "me", "自己", "我", "机器人"}:
+                user_id = event.get_self_id()
             logger.debug(f"正在查询用户（{user_id}）的第 {pos} 条说说")
 
             posts = await self.service.query_feeds(

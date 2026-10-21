@@ -119,6 +119,56 @@
                 },
                 "default": 600
             },
+            "reply_cron": {
+                "description": "自动回复自己说说评论的基准触发时间",
+                "type": "string",
+                "hint": "Bot 会定时检查自己空间里最新几条说说，回复其中新出现、且还没回复过的评论。使用 Cron 表达式定义基准时间；实际执行时间 = 基准点 ± 偏移秒数（随机）。留空表示禁用此功能",
+                "default": "*/30 * * * *"
+            },
+            "reply_offset": {
+                "description": "自动回复评论的时间偏移（秒）",
+                "type": "int",
+                "hint": "基于基准触发时间做随机前后浮动。设为 60 表示会在基准触发时间前后 60 秒内随机触发；设为 0 则严格按 cron 时间触发",
+                "slider": {
+                    "min": 0,
+                    "max": 3600,
+                    "step": 1
+                },
+                "default": 60
+            },
+            "reply_feed_num": {
+                "description": "每次检查自己空间的说说的条数",
+                "type": "int",
+                "hint": "只检查自己空间最新的 N 条说说。每条说说都要额外请求一次详情接口，不建议设得太大",
+                "slider": {
+                    "min": 1,
+                    "max": 20,
+                    "step": 1
+                },
+                "default": 5
+            },
+            "reply_max_per_run": {
+                "description": "每轮最多回复的评论条数",
+                "type": "int",
+                "hint": "单轮自动回复的数量上限，避免一次回复太多评论触发风控",
+                "slider": {
+                    "min": 1,
+                    "max": 10,
+                    "step": 1
+                },
+                "default": 3
+            },
+            "reply_max_age_hours": {
+                "description": "首次运行时只回复多少小时内评论",
+                "type": "int",
+                "hint": "刚启用自动回复时本地还没有评论快照，这里限制只回复最近 N 小时内的评论，避免把历史评论一次性全部回复。设为 0 表示不限制",
+                "slider": {
+                    "min": 0,
+                    "max": 168,
+                    "step": 1
+                },
+                "default": 24
+            },
             "read_prob": {
                 "description": "聊天时触发评说说的概率",
                 "type": "float",

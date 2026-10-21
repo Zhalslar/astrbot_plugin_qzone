@@ -61,10 +61,16 @@ class QzoneHttpClient:
         meta[QZONE_INTERNAL_HTTP_STATUS_KEY] = resp.status
 
         # 仅在明确登录失效时触发重登
+        # 注意：不同 CGI 的 data 字段类型不一致（点赞接口返回字符串，
+        # 图片相关接口返回 dict），这里必须先判断类型再取 ret。
+        resp_data = parsed.get("data")
         if (
             resp.status == HTTP_STATUS_UNAUTHORIZED
             or parsed.get("code") == QZONE_CODE_LOGIN_EXPIRED
-            or parsed.get("data", {}).get("ret") == QZONE_CODE_IMAGE_EXPIRED
+            or (
+                isinstance(resp_data, dict)
+                and resp_data.get("ret") == QZONE_CODE_IMAGE_EXPIRED
+            )
         ):
             if retry >= 2:
                 raise RuntimeError("登录失效，重试失败")

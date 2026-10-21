@@ -219,6 +219,7 @@ class QzonePlugin(Star):
                     "content": comment.content,
                     "created_at": int(comment.create_time or 0),
                     "can_reply": bool(comment.tid and comment.uin),
+                    "parent_id": str(comment.parent_tid) if comment.parent_tid else None,
                 }
                 for index, comment in enumerate(post.comments or [], start=1)
             ]
@@ -369,14 +370,58 @@ class QzonePlugin(Star):
             post = self._require_page_post(body.get("id", ""))
             content = str(body.get("content") or "").strip()
             comment_id = str(body.get("commentid") or "")
+            comment_uin = str(body.get("comment_uin") or body.get("commentuin") or "")
             if not content:
                 raise RuntimeError("回复内容不能为空")
-            target = next(
-                (item for item in post.comments if str(item.tid) == comment_id), None
-            )
+
+            # 楼中楼的 tid 是主评论内的楼层号（都从 1 开始），单靠 tid 会匹配到
+            # 第一条同号评论；前端会带 comment_uin，用它一起定位。
+            def _matches(item: Comment) -> bool:
+                if str(item.tid) != comment_id:
+                    return False
+                return not comment_uin or str(item.uin) == comment_uin
+
+            target = next((item for item in post.comments if _matches(item)), None)
             if target is None:
                 raise RuntimeError("未找到要回复的评论")
-            resp = await self.qzone.reply(post, target, content)
+
+            # 楼中楼回复：QQ 空间只有两级评论，回复楼中楼实际是在其主评论下
+            # 再发一条 @对方的楼中楼，commentId 必须用主评论的 tid。
+            reply_target = target
+            reply_uin = None
+            reply_nick = None
+            target_comment_uin = None
+            if target.parent_tid:
+                main = next(
+                    (
+                        item
+                        for item in post.comments
+                        if not item.parent_tid and str(item.tid) == str(target.parent_tid)
+                    ),
+                    None,
+                )
+                if main is None:
+                    raise RuntimeError("未找到该楼中楼所属的主评论")
+                reply_target = Comment(
+                    uin=target.uin,
+                    nickname=target.nickname,
+                    content=target.content,
+                    create_time=target.create_time,
+                    tid=main.tid,
+                    parent_tid=None,
+                )
+                reply_uin = target.uin
+                reply_nick = target.nickname
+                target_comment_uin = main.uin
+
+            resp = await self.qzone.reply(
+                post,
+                reply_target,
+                content,
+                reply_uin=reply_uin,
+                reply_nick=reply_nick,
+                comment_uin=target_comment_uin,
+            )
             if not resp.ok:
                 raise RuntimeError(resp.message or "回复失败")
             reply = {

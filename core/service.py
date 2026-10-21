@@ -1,3 +1,4 @@
+import re
 import time
 from typing import Any
 
@@ -239,7 +240,9 @@ class PostService:
         if not content:
             raise ValueError("生成评论内容为空")
 
-        await self.qzone.comment(post, content)
+        resp = await self.qzone.comment(post, content)
+        if not resp.ok:
+            raise RuntimeError(resp.message or "评论失败")
 
         uin = await self.session.get_uin()
         name = await self.session.get_nickname()
@@ -255,6 +258,29 @@ class PostService:
         )
         await self.db.save(post)
         logger.info(f"评论 → {post.name}")
+
+    @staticmethod
+    def _comment_key(comment: Comment) -> tuple[int, str]:
+        """评论匹配键：作者 + 去掉空白后的正文（HTML 与详情接口的正文空白不一致）"""
+        return comment.uin, re.sub(r"\s+", "", comment.content)
+
+    async def _refresh_comments(self, post: Post) -> None:
+        """用详情接口刷新评论树，确保评论 tid 是服务端真实 ID。
+
+        动态流 HTML 里的 data-tid 往往只是楼层号（1、2、3…），
+        直接拿它当 commentId 去回复，QQ 侧会忽略并退化成一条普通评论，
+        表现就是“只能在说说底下发评论、没法精确回复”。
+        """
+        if not post.tid:
+            return
+        resp = await self.qzone.get_detail(post)
+        if not resp.ok or not resp.data:
+            logger.debug(f"刷新评论失败：{resp.message}")
+            return
+        parsed = QzoneParser.parse_feeds([resp.data])
+        if not parsed or not parsed[0].comments:
+            return
+        post.comments = parsed[0].comments
 
     async def reply_comment(
         self,
@@ -280,15 +306,62 @@ class PostService:
         if not (-n <= index < n):
             raise ValueError(f"索引越界, 当前仅有 {n} 条可回复评论")
 
-        comment = other_comments[index]
+        target = other_comments[index]
+        target_key = self._comment_key(target)
+
+        # 先用详情接口刷新评论树，拿服务端真实评论 ID；
+        # 刷新后按“作者 + 正文”找回同一条评论，避免索引错位。
+        await self._refresh_comments(post)
+        comment = next(
+            (c for c in post.comments if self._comment_key(c) == target_key),
+            target,
+        )
+        if not comment.tid:
+            raise ValueError("该评论缺少服务端评论 ID，无法精确回复")
 
         # 生成回复
         content = await self.llm.generate_reply(post, comment, event=event)
         if not content:
             raise ValueError("生成回复内容为空")
 
+        # 楼中楼回复：QQ 空间只有两级评论，回复楼中楼实际是在其主评论下
+        # 再发一条 @对方的楼中楼，commentId 必须用主评论的 tid。
+        reply_target = comment
+        reply_uin = None
+        reply_nick = None
+        target_comment_uin = None
+        if comment.parent_tid:
+            main = next(
+                (
+                    c
+                    for c in post.comments
+                    if not c.parent_tid and str(c.tid) == str(comment.parent_tid)
+                ),
+                None,
+            )
+            if main is None:
+                raise ValueError("未找到该楼中楼所属的主评论")
+            reply_target = Comment(
+                uin=comment.uin,
+                nickname=comment.nickname,
+                content=comment.content,
+                create_time=comment.create_time,
+                tid=main.tid,
+                parent_tid=None,
+            )
+            reply_uin = comment.uin
+            reply_nick = comment.nickname
+            target_comment_uin = main.uin
+
         # 发回复
-        resp = await self.qzone.reply(post, comment, content)
+        resp = await self.qzone.reply(
+            post,
+            reply_target,
+            content,
+            reply_uin=reply_uin,
+            reply_nick=reply_nick,
+            comment_uin=target_comment_uin,
+        )
         if not resp.ok:
             raise RuntimeError(resp.message)
 
@@ -300,7 +373,7 @@ class PostService:
                 nickname=name,
                 content=content,
                 create_time=int(time.time()),
-                parent_tid=comment.tid,
+                parent_tid=reply_target.tid,
             )
         )
         await self.db.save(post)

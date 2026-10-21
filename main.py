@@ -103,11 +103,14 @@ class QzonePlugin(Star):
             status = 200
         except Exception as exc:
             logger.exception("qzone page api failed: %s", exc)
+            message = str(exc) or "请求失败"
             payload = {
                 "ok": False,
-                "error": {
-                    "message": str(exc) or "请求失败",
-                },
+                # AstrBot 的插件页桥接只识别字符串类型的 message/error，
+                # 保留 error 对象的同时补一个顶层 message，避免真实异常被
+                # 前端统一显示成 “Request failed with status code 400”。
+                "message": message,
+                "error": {"message": message},
             }
             status = 400
         return await self._page_response(payload, status)

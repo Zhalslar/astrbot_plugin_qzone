@@ -7,6 +7,7 @@ from astrbot.api import logger
 from ..config import PluginConfig
 from ..model import Comment, Post
 from .client import QzoneHttpClient
+from .constants import QZONE_CODE_UNKNOWN
 from .model import ApiResponse
 from .parser import QzoneParser
 from .session import QzoneSession
@@ -28,7 +29,7 @@ class QzoneAPI(QzoneHttpClient):
     VISITOR_URL = "https://h5.qzone.qq.com/proxy/domain/g.qzone.qq.com/cgi-bin/friendshow/cgi_get_visitor_more"
     REPLY_URL = "https://h5.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_re_feeds"
     DELETE_URL = "https://h5.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_delete_v6"
-    DETAIL_URL = "https://h5.qzone.qq.com/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_msgdetail_v6"
+    DETAIL_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_msgdetail_v6"
 
     def __init__(self, session: QzoneSession, config: PluginConfig):
         super().__init__(session, config)
@@ -172,14 +173,85 @@ class QzoneAPI(QzoneHttpClient):
         )
         return ApiResponse.from_raw(raw)
 
+    @staticmethod
+    def _normalize_ret(raw: dict[str, Any]) -> dict[str, Any]:
+        """部分 CGI 用 ret 而不是 code 表示结果，统一成 code 供 ApiResponse 判断。"""
+        if "code" not in raw and "ret" in raw:
+            raw = dict(raw)
+            try:
+                raw["code"] = int(raw["ret"])
+            except (TypeError, ValueError):
+                raw["code"] = raw["ret"]
+        return raw
+
     async def reply(
         self,
         post: Post,
         comment: Comment,
         content: str,
+        *,
+        reply_uin: int | None = None,
+        reply_nick: str | None = None,
+        comment_uin: int | None = None,
     ) -> ApiResponse:
-        """回复指定评论"""
+        """回复指定评论（楼中楼）
+
+        QQ 空间的“回复评论”不是简单地在评论接口上加一个 commentId：
+        - PC 代理（user.qzone.qq.com）要求 topicId 不带 __1、format=json，
+          并用 commentId / replyUin / commentUin 指定被回复的评论；
+        - h5 代理（h5.qzone.qq.com）要求 topicId 带 __1、format=fs、paramstr=2，
+          并且必须额外携带 t1_uin / t1_tid / t2_uin / t2_tid 这组楼层关系参数。
+
+        旧实现只走 h5 且只带 commentId / commentUin，服务端会把它当成
+        一条普通评论，于是表现成“只能在说说底下发评论、无法精确回复”。
+
+        回复楼中楼时，comment 传主评论（commentId 必须是主评论 tid，
+        因为楼中楼的 tid 只是楼内序号，无法区分同楼的多条回复），
+        reply_uin / reply_nick 传被回复的楼中楼作者，comment_uin 传
+        主评论作者。
+        """
+        if not comment.tid:
+            raise ValueError("评论 ID 无效，无法回复")
+
         ctx = await self.session.get_ctx()
+        target_uin = reply_uin or comment.uin
+        target_nick = reply_nick or comment.nickname or target_uin
+        target_comment_uin = comment_uin or comment.uin
+
+        # 网页版回复评论时正文前会带 @ 提及标记，服务端据此渲染“回复 @某人”
+        mention = f"@{{uin:{target_uin},nick:{target_nick},auto:1}} "
+        if not content.startswith("@{"):
+            content = mention + content
+
+        # ① 优先走 PC 代理：topicId 不带 __1，format=json
+        raw = await self.request(
+            "POST",
+            self.COMMENT_URL,
+            params={"g_tk": ctx.gtk2},
+            data={
+                "hostUin": post.uin,
+                "topicId": f"{post.uin}_{post.tid}",
+                "content": content,
+                "format": "json",
+                "qzreferrer": f"https://user.qzone.qq.com/{ctx.uin}/main",
+                "commentId": comment.tid,
+                "replyUin": target_uin,
+                "commentUin": target_comment_uin,
+            },
+        )
+        resp = ApiResponse.from_raw(self._normalize_ret(raw))
+        if resp.ok:
+            return resp
+
+        # 响应解析失败（空 body / 非 JSON）时无法判断服务端是否已经写入：
+        # 再走 h5 可能发出第二条重复回复，所以这种情况不回退，直接交给上层报错。
+        if resp.code == QZONE_CODE_UNKNOWN:
+            logger.warning(f"PC 回复评论结果不明，跳过 h5 回退：{resp.message}")
+            return resp
+
+        logger.debug(f"PC 回复评论失败，回退 h5：{resp.message}")
+
+        # ② h5 代理回退：补齐 t1/t2 楼层关系参数
         raw = await self.request(
             "POST",
             self.REPLY_URL,
@@ -195,12 +267,16 @@ class QzoneAPI(QzoneHttpClient):
                 "outCharset": "utf-8",
                 "plat": "qzone",
                 "source": "ic",
-                "platformid": 52,
+                "platformid": 50,
                 "format": "fs",
                 "ref": "feeds",
                 "content": content,
                 "commentId": comment.tid,
-                "commentUin": comment.uin,
+                "commentUin": target_comment_uin,
+                "t1_uin": post.uin,  # 楼层关系：说说作者
+                "t1_tid": post.tid,  # 楼层关系：说说 ID
+                "t2_uin": target_uin,  # 楼层关系：被回复者
+                "t2_tid": comment.tid,  # 楼层关系：被回复评论 ID
                 "richval": "",  # 富文本内容
                 "richtype": "",  # 富文本类型
                 "private": "0",  # 是否私密评论
@@ -218,7 +294,7 @@ class QzoneAPI(QzoneHttpClient):
                 "Origin": "https://user.qzone.qq.com",
             },
         )
-        return ApiResponse.from_raw(raw)
+        return ApiResponse.from_raw(self._normalize_ret(raw))
 
     async def delete(self, tid: str) -> ApiResponse:
         """删除指定说说"""

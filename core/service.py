@@ -225,7 +225,9 @@ class PostService:
         """点赞帖子"""
         if not post.tid:
             raise ValueError("帖子 tid 为空")
-        await self.qzone.like(post)
+        resp = await self.qzone.like(post)
+        if not resp.ok:
+            raise RuntimeError(resp.message or "点赞失败")
         logger.info(f"已点赞 → {post.name}")
 
     async def comment_posts(

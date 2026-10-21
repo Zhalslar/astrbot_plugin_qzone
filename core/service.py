@@ -10,6 +10,7 @@ from .db import PostDB
 from .llm_action import LLMAction
 from .model import Comment, Post
 from .qzone import QzoneAPI, QzoneParser, QzoneSession
+from .qzone.comment_filter import pick_pending_comments
 from .qzone.constants import (
     HTTP_STATUS_FORBIDDEN,
     QZONE_CODE_LOGIN_EXPIRED,
@@ -56,6 +57,7 @@ class PostService:
         with_detail: bool = False,
         no_self: bool = False,
         no_commented: bool = False,
+        save: bool = True,
     ) -> list[Post]:
         if target_id:
             resp = await self.qzone.get_feeds(target_id, pos=pos, num=num)
@@ -79,7 +81,9 @@ class PostService:
 
         if no_self:
             uin = await self.session.get_uin()
-            posts = [p for p in posts if p.uin != uin]
+            # 显式查询自己的空间时不能把自己发的说说过滤掉，否则结果永远是空列表
+            if not (target_id and str(target_id).strip() == str(uin)):
+                posts = [p for p in posts if p.uin != uin]
 
         if with_detail:
             posts = await self._fill_post_detail(posts)
@@ -89,8 +93,9 @@ class PostService:
         if no_commented:
             posts = await self._filter_not_commented(posts)
 
-        for post in posts:
-            await self.db.save(post)
+        if save:
+            for post in posts:
+                await self.db.save(post)
 
         return posts
 
@@ -210,6 +215,97 @@ class PostService:
 
         return result
 
+    # ==================== 自己说说下的评论 ====================
+
+    async def fetch_own_feed_replies(
+        self,
+        *,
+        num: int = 5,
+        limit_per_post: int = 3,
+        max_total: int = 5,
+        max_age_hours: int = 24,
+    ) -> list[tuple[Post, Comment]]:
+        """
+        找出自己说说下「需要回复的新评论」。
+
+        只回复最近 max_age_hours 小时内的他人评论，并且跳过机器人已经回复过的评论：
+        判据是「这条评论下有没有机器人的回复」，而不是「本地库里见没见过它」，
+        否则插件启用前就存在的评论会永远得不到回复。
+        """
+        uin = await self.session.get_uin()
+        try:
+            posts = await self.query_feeds(
+                target_id=str(uin),
+                pos=0,
+                num=num,
+                with_detail=True,
+                save=False,
+            )
+        except RuntimeError as e:
+            logger.warning(f"读取自己空间的说说失败：{e}")
+            return []
+
+        now = int(time.time())
+        window = max(int(max_age_hours), 0) * 3600
+        pending: list[tuple[Post, Comment]] = []
+
+        for post in posts:
+            old = await self.db.get(post.tid, key="tid") if post.tid else None
+            # 本地快照里已经回复过的评论（服务端评论树不一定带回机器人的回复）
+            replied = {
+                str(c.parent_tid)
+                for c in (old.comments if old else [])
+                if c.uin and int(c.uin) == uin and c.parent_tid
+            }
+
+            candidates = pick_pending_comments(
+                post.comments,
+                self_uin=uin,
+                now=now,
+                window_seconds=window,
+                replied_keys=replied,
+            )
+            pending.extend((post, c) for c in candidates[:limit_per_post])
+            await self.db.save(post)
+
+            if len(pending) >= max_total:
+                break
+
+        return pending[:max_total]
+
+    async def reply_to_comment(
+        self,
+        post: Post,
+        comment: Comment,
+        event: AiocqhttpMessageEvent | None = None,
+    ) -> str:
+        """回复指定的某条评论，返回实际发出的内容"""
+        if not post.tid:
+            raise ValueError("帖子 tid 为空")
+
+        content = await self.llm.generate_reply(post, comment, event=event)
+        if not content:
+            raise ValueError("生成回复内容为空")
+
+        resp = await self.qzone.reply(post, comment, content)
+        if not resp.ok:
+            raise RuntimeError(resp.message)
+
+        # 本地回填，下次拉取详情前也能看到这条回复
+        name = await self.session.get_nickname()
+        post.comments.append(
+            Comment(
+                uin=await self.session.get_uin(),
+                nickname=name,
+                content=content,
+                create_time=int(time.time()),
+                parent_tid=comment.parent_tid or comment.tid,
+            )
+        )
+        await self.db.save(post)
+        logger.info(f"回复评论 → {comment.nickname}: {comment.content[:20]}")
+        return content
+
     # ==================== 对外接口 ========================
 
     async def view_visitor(self) -> str:
@@ -281,29 +377,7 @@ class PostService:
             raise ValueError(f"索引越界, 当前仅有 {n} 条可回复评论")
 
         comment = other_comments[index]
-
-        # 生成回复
-        content = await self.llm.generate_reply(post, comment, event=event)
-        if not content:
-            raise ValueError("生成回复内容为空")
-
-        # 发回复
-        resp = await self.qzone.reply(post, comment, content)
-        if not resp.ok:
-            raise RuntimeError(resp.message)
-
-        # 本地回填
-        name = await self.session.get_nickname()
-        post.comments.append(
-            Comment(
-                uin=uin,
-                nickname=name,
-                content=content,
-                create_time=int(time.time()),
-                parent_tid=comment.tid,
-            )
-        )
-        await self.db.save(post)
+        await self.reply_to_comment(post, comment, event=event)
 
     async def publish_post(
         self,

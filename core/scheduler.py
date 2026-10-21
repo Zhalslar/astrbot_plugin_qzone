@@ -1,6 +1,8 @@
 import random
 import zoneinfo
+from collections.abc import Callable
 from datetime import datetime, timedelta
+from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -155,6 +157,53 @@ class AutoComment(AutoRandomCronTask):
             except Exception as e:
                 logger.exception(
                     f"[{self.job_name}] 跳过说说评论失败: tid={post.tid}, uin={post.uin}, name={post.name}, error={e}"
+                )
+
+
+class AutoReply(AutoRandomCronTask):
+    """自动回复自己说说下的新评论"""
+
+    def __init__(
+        self,
+        config: PluginConfig,
+        service: PostService,
+        sender: Sender,
+        client_provider: Callable[[], Any] | None = None,
+    ):
+        cron = config.trigger.reply_cron
+        timezone = config.timezone
+        offset = config.trigger.reply_offset
+        super().__init__("AutoReply", cron, timezone, offset)
+        self.cfg = config
+        self.service = service
+        self.sender = sender
+        # 定时任务可能在任何消息之前触发，此时配置里的 CQHttp 客户端还没绑定，
+        # 取 Cookie 会报「CQHttp 实例不存在」，所以每次执行前补一次绑定
+        self.client_provider = client_provider
+
+    async def do_task(self):
+        if self.client_provider is not None:
+            try:
+                self.client_provider()
+            except Exception:
+                logger.debug(f"[{self.job_name}] 补绑 CQHttp 客户端失败", exc_info=True)
+
+        replies = await self.service.fetch_own_feed_replies(
+            num=self.cfg.trigger.reply_feed_num,
+            max_total=self.cfg.trigger.reply_max_per_run,
+            max_age_hours=self.cfg.trigger.reply_max_age_hours,
+        )
+        for post, comment in replies:
+            try:
+                content = await self.service.reply_to_comment(post, comment)
+                await self.sender.send_admin_post(
+                    post,
+                    message=f"自动回复评论（{comment.nickname}）：{content}",
+                )
+            except Exception as e:
+                logger.exception(
+                    f"[{self.job_name}] 回复评论失败: tid={post.tid}, "
+                    f"comment_uin={comment.uin}, comment_tid={comment.tid}, error={e}"
                 )
 
 

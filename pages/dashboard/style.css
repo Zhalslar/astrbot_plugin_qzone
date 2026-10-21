@@ -1,4 +1,4 @@
-﻿/* Modern UI CSS for QQ Zone Ultra */
+/* Modern UI CSS for QQ Zone Ultra */
 :root {
   --bg-color: #f3f6f9;
   --surface: #ffffff;
@@ -738,6 +738,20 @@ button:active {
 .comment:hover {
   background: var(--surface-hover);
   border-color: var(--border);
+}
+
+/* 楼中楼：挂在主评论正文下方，缩进 + 左侧竖线表示层级 */
+.comment-children {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+}
+
+.comment-children .comment {
+  padding: 10px 12px;
+  background: var(--surface-hover);
 }
 
 .comment .avatar {

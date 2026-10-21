@@ -1,4 +1,4 @@
-﻿const bridge = window.AstrBotPluginPage;
+const bridge = window.AstrBotPluginPage;
 const BRIDGE_READY_TIMEOUT_MS = 5000;
 const BRIDGE_REQUEST_TIMEOUT_MS = 20000;
 
@@ -705,8 +705,31 @@ function renderDetail(post, options = {}) {
     loading.textContent = "正在同步详情...";
     comments.append(loading);
   }
+  // 评论是两级结构：parent_id 指向主评论的 id。先按 parent_id 分组，让
+  // 楼中楼渲染在对应主评论下方；找不到父评论的孤立回复按顶层展示，避免丢评论。
+  const childMap = new Map();
+  const rootComments = [];
   for (const item of post.comments || []) {
-    comments.append(renderComment(post, item));
+    const parentId = item.parent_id ? text(item.parent_id) : "";
+    if (!parentId) {
+      rootComments.push(item);
+      continue;
+    }
+    const list = childMap.get(parentId) || [];
+    list.push(item);
+    childMap.set(parentId, list);
+  }
+  const renderedIds = new Set();
+  for (const item of rootComments) {
+    const children = childMap.get(text(item.id)) || [];
+    renderedIds.add(text(item.id));
+    comments.append(renderComment(post, item, children));
+  }
+  for (const [parentId, list] of childMap) {
+    if (renderedIds.has(parentId)) continue;
+    for (const item of list) {
+      comments.append(renderComment(post, item));
+    }
   }
   if (!post.comments?.length && !isLoading) {
     const empty = document.createElement("p");
@@ -733,7 +756,7 @@ function renderDetail(post, options = {}) {
   el.detailContent.append(comments, form);
 }
 
-function renderComment(post, comment) {
+function renderComment(post, comment, children = []) {
   rememberAuthor(comment.author);
   const row = document.createElement("div");
   row.className = "comment";
@@ -810,6 +833,14 @@ function renderComment(post, comment) {
       }
     });
     row.append(form);
+  }
+  if (children.length) {
+    const box = document.createElement("div");
+    box.className = "comment-children";
+    for (const child of children) {
+      box.append(renderComment(post, child));
+    }
+    body.append(box);
   }
   return row;
 }
@@ -1038,6 +1069,8 @@ async function sendReply(post, comment, content) {
     content: `回复 ${targetName}：${replyText}`,
     created_at: Math.floor(Date.now() / 1000),
     can_reply: false,
+    // 服务端是两级结构：回复楼中楼时新评论挂在主评论下，乐观插入保持一致
+    parent_id: comment.parent_id || text(comment.id),
   };
   updatePost(postId, {
     comments: [...comments, optimisticReply],

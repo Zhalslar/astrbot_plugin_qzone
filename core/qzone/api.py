@@ -7,6 +7,7 @@ from astrbot.api import logger
 from ..config import PluginConfig
 from ..model import Comment, Post
 from .client import QzoneHttpClient
+from .constants import QZONE_CODE_UNKNOWN
 from .model import ApiResponse
 from .parser import QzoneParser
 from .session import QzoneSession
@@ -238,6 +239,12 @@ class QzoneAPI(QzoneHttpClient):
         )
         resp = ApiResponse.from_raw(self._normalize_ret(raw))
         if resp.ok:
+            return resp
+
+        # 响应解析失败（空 body / 非 JSON）时无法判断服务端是否已经写入：
+        # 再走 h5 可能发出第二条重复回复，所以这种情况不回退，直接交给上层报错。
+        if resp.code == QZONE_CODE_UNKNOWN:
+            logger.warning(f"PC 回复评论结果不明，跳过 h5 回退：{resp.message}")
             return resp
 
         logger.debug(f"PC 回复评论失败，回退 h5：{resp.message}")

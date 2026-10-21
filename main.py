@@ -424,8 +424,12 @@ class QzonePlugin(Star):
             )
             if not resp.ok:
                 raise RuntimeError(resp.message or "回复失败")
+            # 不同代理把新评论 ID 放在不同层级（顶层 tid 或 data.tid），
+            # 取不到时留空，后续详情刷新会补上。
+            inner = resp.data.get("data")
+            inner = inner if isinstance(inner, dict) else {}
             reply = {
-                "id": str(resp.data.get("tid") or ""),
+                "id": str(inner.get("tid") or resp.data.get("tid") or ""),
                 "content": content,
                 "author": {
                     "uin": await self.session.get_uin(),
@@ -433,6 +437,10 @@ class QzonePlugin(Star):
                     "avatar": "",
                 },
             }
+            # 服务端是两级结构：回复楼中楼时新评论挂在主评论下（reply_target
+            # 已被换成主评论），缓存里也要保持一致，否则下次按 parent_tid
+            # 找不到所属主评论。
+            cached_parent_tid = reply_target.tid if target.parent_tid else None
             post.comments.append(
                 Comment(
                     uin=reply["author"]["uin"],
@@ -440,7 +448,7 @@ class QzonePlugin(Star):
                     content=content,
                     create_time=0,
                     tid=int(reply["id"]) if reply["id"].isdigit() else 0,
-                    parent_tid=target.tid,
+                    parent_tid=cached_parent_tid,
                 )
             )
             return {"ok": True, "data": {"reply": reply}, "message": "回复已发送。"}

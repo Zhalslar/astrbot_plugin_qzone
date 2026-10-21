@@ -308,14 +308,25 @@ class PostService:
 
         target = other_comments[index]
         target_key = self._comment_key(target)
+        # 同一作者可能发过多条正文相同的评论，只按“作者 + 正文”匹配会全部
+        # 命中第一条。这里记下目标在旧评论树里是第几次出现，刷新后按同样
+        # 次序取回，避免把回复发到另一条同名评论上。
+        target_pos = next(
+            (i for i, c in enumerate(post.comments) if c is target),
+            len(post.comments),
+        )
+        occurrence = sum(
+            1 for c in post.comments[:target_pos] if self._comment_key(c) == target_key
+        )
 
         # 先用详情接口刷新评论树，拿服务端真实评论 ID；
         # 刷新后按“作者 + 正文”找回同一条评论，避免索引错位。
         await self._refresh_comments(post)
-        comment = next(
-            (c for c in post.comments if self._comment_key(c) == target_key),
-            target,
-        )
+        candidates = [c for c in post.comments if self._comment_key(c) == target_key]
+        if candidates:
+            comment = candidates[occurrence] if occurrence < len(candidates) else candidates[0]
+        else:
+            comment = target
         if not comment.tid:
             raise ValueError("该评论缺少服务端评论 ID，无法精确回复")
 

@@ -1,5 +1,6 @@
 import base64
 import random
+from datetime import datetime
 
 from astrbot.api import logger
 from astrbot.api.event import filter
@@ -802,6 +803,40 @@ class QzonePlugin(Star):
             get_image(boolean): 是否获取当前对话中的图片附加到说说里, 默认为True
         """
         images = await get_image_urls(event) if get_image else []
+        if not str(text or "").strip() and not images:
+            return "没想好写什么，就不发了。"
+
+        now = datetime.now()
+        trigger = self.cfg.trigger
+        start_hour = getattr(trigger, "llm_publish_start_hour", 9) or 9
+        end_hour = getattr(trigger, "llm_publish_end_hour", 23)
+        end_hour = 23 if end_hour is None else end_hour
+        if now.hour < start_hour or now.hour > end_hour:
+            return "这个点不想发说说。"
+
+        cooldown_hours = getattr(trigger, "llm_publish_cooldown_hours", 20) or 0
+        daily_limit = getattr(trigger, "llm_publish_daily_limit", 1)
+        daily_limit = 1 if daily_limit is None else daily_limit
+
+        try:
+            recent = await self.db.list(offset=0, limit=50, reverse=True)
+        except Exception:
+            recent = []
+        published = [
+            item for item in recent if item.status == "approved" and item.create_time
+        ]
+        if published:
+            last = max(int(item.create_time) for item in published)
+            if cooldown_hours and now.timestamp() - last < cooldown_hours * 3600:
+                return "刚发过一条，先不发了。"
+            today_count = sum(
+                1
+                for item in published
+                if datetime.fromtimestamp(int(item.create_time)).date() == now.date()
+            )
+            if daily_limit >= 0 and today_count >= daily_limit:
+                return "今天已经发够了，明天再说。"
+
         try:
             post = await self.service.publish_post(text=text, images=images)
             await self.sender.send_post(event, post, message="已发布")

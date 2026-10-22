@@ -141,6 +141,50 @@
                 "hint": "在评论完说说后会自动给此说说点赞",
                 "type": "bool",
                 "default": true
+            },
+            "llm_publish_cooldown_hours": {
+                "description": "LLM 主动发说说的冷却（小时）",
+                "hint": "两次 LLM 发说说之间的最小间隔；0 表示不限制",
+                "type": "int",
+                "slider": {
+                    "min": 0,
+                    "max": 72,
+                    "step": 1
+                },
+                "default": 20
+            },
+            "llm_publish_daily_limit": {
+                "description": "LLM 每天最多发几条说说",
+                "hint": "0 表示禁止，默认 1 条",
+                "type": "int",
+                "slider": {
+                    "min": 0,
+                    "max": 10,
+                    "step": 1
+                },
+                "default": 1
+            },
+            "llm_publish_start_hour": {
+                "description": "LLM 发说说的起始小时",
+                "hint": "24 小时制，默认 9 点",
+                "type": "int",
+                "slider": {
+                    "min": 0,
+                    "max": 23,
+                    "step": 1
+                },
+                "default": 9
+            },
+            "llm_publish_end_hour": {
+                "description": "LLM 发说说的结束小时",
+                "hint": "24 小时制，默认 23 点",
+                "type": "int",
+                "slider": {
+                    "min": 0,
+                    "max": 23,
+                    "step": 1
+                },
+                "default": 23
             }
         }
     },

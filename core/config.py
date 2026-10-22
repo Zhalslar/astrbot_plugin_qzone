@@ -145,6 +145,10 @@ class TriggerConfig(ConfigNode):
     read_prob: float
     send_admin: bool
     like_when_comment: bool
+    llm_publish_cooldown_hours: int
+    llm_publish_daily_limit: int
+    llm_publish_start_hour: int
+    llm_publish_end_hour: int
 
 
 class PluginConfig(ConfigNode):

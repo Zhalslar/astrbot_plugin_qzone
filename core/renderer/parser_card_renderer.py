@@ -464,6 +464,7 @@ class Renderer:
         """渲染卡片并落盘，失败返回 None"""
         cache = self.cfg.temp_dir / f"card_{uuid.uuid4().hex}.png"
         try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
             img = await self._create_card_image(result)
             buf = BytesIO()
             await asyncio.to_thread(img.save, buf, format="PNG")
@@ -474,6 +475,7 @@ class Renderer:
         except Exception:
             logger.error(
                 f"Failed to render card for result={result}",
+                exc_info=True,
             )
             return None
 

@@ -164,7 +164,7 @@ class PluginConfig(ConfigNode):
         self.context = context
         self.data_dir = Path(get_astrbot_plugin_data_path()) / self._plugin_name
         self.plugin_dir = Path(get_astrbot_plugin_path()) / self._plugin_name
-        self.temp_dir = Path(get_astrbot_temp_path()) / self._plugin_name
+        self.temp_dir = Path(get_astrbot_temp_path())
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
 
